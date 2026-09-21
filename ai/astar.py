@@ -1,107 +1,72 @@
-"""A* search with a risk-aware cost, used to score candidate positions.
-
-Search space: the board graph restricted to *snake-free* edges (a route may
-not land on a snake head). Edge cost for stepping onto cell ``m``::
-
-    cost(m) = 1 + EXPOSURE_WEIGHT * snakes_within_6(m) / 6
-
-i.e. one roll plus the probability that the *next* single-die roll would hit a
-snake from ``m``. The heuristic is the BFS minimum-roll table computed on the
-full graph, which is admissible and consistent (every edge costs >= 1 and the
-snake-free graph is a subgraph of the full graph).
 """
-from __future__ import annotations
+A* Search & Strategic Scorer module for AI-Powered Snake & Ladder.
+Uses BFS shortest-path distance as an admissible heuristic h(s) combined with
+board progress and ladder/snake outcomes to produce a normalized score in [0.0, 1.0].
+"""
 
-import heapq
-from dataclasses import dataclass
-
-from game.board import Board, SpecialKind
-from game.constants import DICE_SIDES, GOAL_CELL, NUM_CELLS, START_CELL
-
+from typing import Dict, Any, Optional
+from game.board import Board
 from .bfs import BFSAnalyzer
-from .features import FeatureExtractor
-
-EXPOSURE_WEIGHT = 1.0
-UNREACHABLE_PENALTY = 5.0   # only used if no snake-free route exists
-
-
-@dataclass(frozen=True)
-class AStarResult:
-    start: int
-    found: bool
-    path: tuple[int, ...]
-    rolls: int          # number of rolls along the found path
-    cost: float         # risk-adjusted cost (>= rolls)
-    expanded: int       # nodes expanded (search effort)
-
-
-def astar_search(board: Board, start: int, goal: int, heuristic, edge_cost,
-                 allow_snakes: bool = False) -> AStarResult:
-    """Generic A* over the board graph."""
-    if start == goal:
-        return AStarResult(start, True, (start,), 0, 0.0, 0)
-    counter = 0
-    open_heap: list[tuple[float, float, int, int]] = [(heuristic(start), 0.0, counter, start)]
-    best_g: dict[int, float] = {start: 0.0}
-    parent: dict[int, int | None] = {start: None}
-    closed: set[int] = set()
-    expanded = 0
-    while open_heap:
-        _, neg_g, _, cell = heapq.heappop(open_heap)
-        g = -neg_g
-        if cell in closed:
-            continue
-        closed.add(cell)
-        expanded += 1
-        if cell == goal:
-            path = [cell]
-            while parent[path[-1]] is not None:
-                path.append(parent[path[-1]])  # type: ignore[arg-type]
-            path.reverse()
-            return AStarResult(start, True, tuple(path), len(path) - 1, g, expanded)
-        for edge in board.edges[cell]:
-            if edge.kind is SpecialKind.SNAKE and not allow_snakes:
-                continue
-            nxt = edge.destination
-            ng = g + edge_cost(nxt)
-            if nxt not in best_g or ng < best_g[nxt] - 1e-12:
-                best_g[nxt] = ng
-                parent[nxt] = cell
-                counter += 1
-                # negative g as tie-breaker => prefer deeper nodes on equal f
-                heapq.heappush(open_heap, (ng + heuristic(nxt), -ng, counter, nxt))
-    return AStarResult(start, False, (start,), -1, float("inf"), expanded)
 
 
 class AStarScorer:
-    """Turns A* route costs into a normalised 0..1 desirability score."""
+    """
+    Evaluates candidate board states using A* pathfinding principles.
+    """
 
-    def __init__(self, board: Board, bfs: BFSAnalyzer, features: FeatureExtractor) -> None:
-        self.board = board
-        self.bfs = bfs
-        self.features = features
-        self._cache: dict[int, AStarResult] = {}
-        for cell in range(START_CELL, NUM_CELLS + 1):
-            self._cache[cell] = self._run(cell)
-        self.max_cost = max(r.cost for c, r in self._cache.items() if c != GOAL_CELL)
+    def __init__(self, board: Optional[Board] = None, bfs: Optional[BFSAnalyzer] = None):
+        self.board: Board = board if board is not None else Board()
+        self.bfs: BFSAnalyzer = bfs if bfs is not None else BFSAnalyzer(self.board)
+        self.max_bfs_rolls: int = max(self.bfs.min_rolls.values()) if self.bfs.min_rolls else 8
 
-    def _edge_cost(self, cell: int) -> float:
-        return 1.0 + EXPOSURE_WEIGHT * self.features.snakes_within_6(cell) / DICE_SIDES
+    def evaluate_candidate(
+        self,
+        current_cell: int,
+        roll: int,
+        destination_cell: int,
+        hit_ladder: bool = False,
+        hit_snake: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Evaluates a candidate move from current_cell to destination_cell.
+        Returns detailed A* evaluation metrics and a normalized score in [0.0, 1.0].
+        """
+        # Step cost g(s'): 1 roll taken
+        g_cost = 1.0
 
-    def _run(self, cell: int) -> AStarResult:
-        res = astar_search(self.board, cell, GOAL_CELL, self.bfs.min_rolls,
-                           self._edge_cost, allow_snakes=False)
-        if res.found:
-            return res
-        fallback = astar_search(self.board, cell, GOAL_CELL, self.bfs.min_rolls,
-                                self._edge_cost, allow_snakes=True)
-        return AStarResult(cell, fallback.found, fallback.path, fallback.rolls,
-                           fallback.cost + UNREACHABLE_PENALTY, fallback.expanded)
+        # Admissible heuristic h(s'): minimum rolls from destination to 100
+        h_cost = float(self.bfs.get_min_rolls(destination_cell))
 
-    def result(self, cell: int) -> AStarResult:
-        return self._cache[cell]
+        # Overall f(s') = g(s') + h(s')
+        f_cost = g_cost + h_cost
 
-    def score(self, cell: int) -> float:
-        """1.0 at the goal, approaching 0.0 for the costliest cells."""
-        cost = self._cache[cell].cost
-        return float(min(1.0, max(0.0, 1.0 - cost / self.max_cost)))
+        # Goal proximity component: cell 100 is 1.0, cell 1 is 0.01
+        progress = destination_cell / float(self.board.TOTAL_CELLS)
+
+        # Efficiency component based on heuristic: lower h_cost is better
+        # Normalizes h_cost from 0 (at 100) to max_bfs_rolls (at worst cell)
+        heuristic_score = max(0.0, 1.0 - (h_cost / float(self.max_bfs_rolls + 1)))
+
+        # Strategic bonuses/penalties
+        bonus = 0.0
+        if destination_cell == self.board.TOTAL_CELLS:
+            bonus += 0.25
+        elif hit_ladder:
+            bonus += 0.10
+        elif hit_snake:
+            bonus -= 0.15
+
+        # Weighted combination: 60% heuristic efficiency, 30% board progress, 10% bonus
+        raw_score = (0.60 * heuristic_score) + (0.30 * progress) + bonus
+        normalized_score = max(0.01, min(1.0, raw_score))
+
+        return {
+            "roll": roll,
+            "destination": destination_cell,
+            "g_cost": g_cost,
+            "h_cost": h_cost,
+            "f_cost": f_cost,
+            "min_rolls_to_goal": int(h_cost),
+            "progress_pct": progress,
+            "astar_score": round(float(normalized_score), 4),
+        }

@@ -1,121 +1,154 @@
-"""Colour palette, spacing scale and font management."""
-from __future__ import annotations
+"""
+Theme module for AI-Powered Snake & Ladder.
+Provides a cohesive, futuristic dark glassmorphism design system,
+color palette tokens, responsive font loaders, and surface drawing helpers.
+"""
 
 import pygame
-
-Color = tuple[int, ...]
-
-# --- palette ---------------------------------------------------------------
-BG_TOP: Color = (7, 10, 24)
-BG_BOTTOM: Color = (16, 10, 36)
-PANEL_TOP: Color = (30, 38, 70)
-PANEL_BOTTOM: Color = (15, 19, 40)
-CARD_FILL: Color = (10, 14, 32, 150)
-BORDER: Color = (84, 104, 170)
-
-TEXT: Color = (234, 240, 255)
-TEXT_DIM: Color = (144, 156, 196)
-TEXT_FAINT: Color = (92, 104, 148)
-
-CYAN: Color = (72, 222, 255)
-MAGENTA: Color = (218, 96, 255)
-GOLD: Color = (255, 206, 96)
-GREEN: Color = (84, 236, 164)
-RED: Color = (255, 94, 116)
-ORANGE: Color = (255, 154, 84)
-BLUE: Color = (104, 168, 255)
-
-HUMAN_COLOR: Color = CYAN
-AI_COLOR: Color = MAGENTA
-
-ZONE_COLORS: dict[str, Color] = {
-    "DANGER": RED,
-    "SAFE": BLUE,
-    "ADVANTAGE": GREEN,
-}
-
-# event-log colours by EventKind value
-EVENT_COLORS: dict[str, Color] = {
-    "system": TEXT_DIM,
-    "roll": (200, 210, 240),
-    "select": CYAN,
-    "move": TEXT,
-    "ladder": GREEN,
-    "snake": RED,
-    "shield": GOLD,
-    "ai": MAGENTA,
-    "win": GOLD,
-}
-
-# --- UI scale ----------------------------------------------------------------
-DESIGN_W, DESIGN_H = 1440, 900
+from typing import Tuple, Optional, Dict, List
 
 
-class _Scale:
-    value = 1.0
+class Theme:
+    """
+    Design tokens and graphic utilities for the application.
+    """
 
+    # Background Colors
+    BG_DARK: Tuple[int, int, int] = (11, 15, 25)          # Deep Obsidian
+    BG_PANEL: Tuple[int, int, int] = (17, 24, 39)         # Dark Navy Glass
+    BG_CARD: Tuple[int, int, int] = (31, 41, 55)          # Elevated Charcoal
+    BG_CARD_HOVER: Tuple[int, int, int] = (45, 55, 72)
+    BG_CELL_LIGHT: Tuple[int, int, int] = (20, 27, 45)    # Board alternating cell
+    BG_CELL_DARK: Tuple[int, int, int] = (15, 20, 35)
 
-def set_scale(value: float) -> None:
-    _Scale.value = max(0.45, min(3.0, value))
+    # Accent & Player Colors
+    CYAN_HUMAN: Tuple[int, int, int] = (6, 182, 212)       # Human neon cyan
+    CYAN_HUMAN_GLOW: Tuple[int, int, int] = (34, 211, 238)
+    PURPLE_AI: Tuple[int, int, int] = (168, 85, 247)       # AI cyber purple
+    PURPLE_AI_GLOW: Tuple[int, int, int] = (192, 132, 252)
 
+    # Game Mechanics Colors
+    GREEN_LADDER: Tuple[int, int, int] = (16, 185, 129)    # Emerald Green
+    GREEN_ADVANTAGE: Tuple[int, int, int] = (52, 211, 153)
+    RED_SNAKE: Tuple[int, int, int] = (239, 68, 68)        # Crimson Red
+    RED_DANGER: Tuple[int, int, int] = (248, 113, 113)
+    AMBER_SHIELD: Tuple[int, int, int] = (245, 158, 11)    # Golden Amber
+    BLUE_SAFE: Tuple[int, int, int] = (59, 130, 246)       # Electric Blue
 
-def get_scale() -> float:
-    return _Scale.value
+    # UI Borders and Dividers
+    BORDER_DEFAULT: Tuple[int, int, int] = (55, 65, 81)
+    BORDER_ACCENT: Tuple[int, int, int] = (99, 102, 241)   # Indigo Glow
+    BORDER_HIGHLIGHT: Tuple[int, int, int] = (147, 197, 253)
 
+    # Typography Colors
+    TEXT_WHITE: Tuple[int, int, int] = (248, 250, 252)
+    TEXT_MUTED: Tuple[int, int, int] = (156, 163, 175)
+    TEXT_SUBTLE: Tuple[int, int, int] = (107, 114, 128)
+    TEXT_DARK: Tuple[int, int, int] = (31, 41, 55)
 
-def S(value: float) -> int:
-    """Scale a design-space length (pixels at 1440x900) to the current UI scale."""
-    return int(round(value * _Scale.value))
+    # Font Cache
+    _font_cache: Dict[Tuple[str, int, bool], pygame.font.Font] = {}
 
+    @classmethod
+    def get_font(cls, size: int = 16, bold: bool = False) -> pygame.font.Font:
+        """Loads and caches system fonts with fallbacks."""
+        key = ("default", size, bold)
+        if key not in cls._font_cache:
+            if not pygame.font.get_init():
+                pygame.font.init()
 
-# --- fonts ---------------------------------------------------------------------
-_FONT_CANDIDATES = ("segoeui", "sfprodisplay", "helveticaneue", "avenirnext", "avenir",
-                    "inter", "roboto", "opensans", "dejavusans", "verdana", "arial")
-
-
-class FontManager:
-    """Loads fonts lazily with graceful fallbacks (never raises)."""
-
-    def __init__(self) -> None:
-        self._cache: dict[tuple[int, bool], pygame.font.Font] = {}
-        self._family: str | None = None
-        self._resolved = False
-
-    def _resolve_family(self) -> str | None:
-        if self._resolved:
-            return self._family
-        self._resolved = True
-        for name in _FONT_CANDIDATES:
             try:
-                if pygame.font.match_font(name):
-                    self._family = name
-                    break
+                font = pygame.font.SysFont("helvetica,arial,segoeui,roboto,sans-serif", size, bold=bold)
             except Exception:
-                continue
-        return self._family
+                font = pygame.font.Font(None, size)
 
-    def get(self, size: float, bold: bool = False) -> pygame.font.Font:
-        """Font whose pixel size is ``size`` design px scaled to the window."""
-        px = max(9, int(round(size * _Scale.value)))
-        key = (px, bold)
-        font = self._cache.get(key)
-        if font is None:
-            font = self._create(px, bold)
-            self._cache[key] = font
-        return font
+            if font is None:
+                font = pygame.font.Font(None, size)
 
-    def _create(self, px: int, bold: bool) -> pygame.font.Font:
-        family = self._resolve_family()
-        try:
-            if family:
-                return pygame.font.SysFont(family, px, bold=bold)
-        except Exception:
-            pass
-        try:
-            return pygame.font.Font(None, int(px * 1.25))
-        except Exception:
-            pygame.font.init()
-            return pygame.font.Font(None, int(px * 1.25))
+            cls._font_cache[key] = font
 
+        return cls._font_cache[key]
 
-fonts = FontManager()
+    @classmethod
+    def draw_rounded_rect(
+        cls,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        color: Tuple[int, ...],
+        radius: int = 8,
+        border_color: Optional[Tuple[int, ...]] = None,
+        border_width: int = 1,
+    ) -> None:
+        """Draws a rounded rectangle with antialiased borders and alpha support."""
+        if len(color) == 4 and color[3] < 255:
+            shape_surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+            pygame.draw.rect(shape_surf, color, (0, 0, rect.width, rect.height), border_radius=radius)
+            if border_color and border_width > 0:
+                pygame.draw.rect(
+                    shape_surf, border_color, (0, 0, rect.width, rect.height), border_width, border_radius=radius
+                )
+            surface.blit(shape_surf, rect.topleft)
+        else:
+            pygame.draw.rect(surface, color, rect, border_radius=radius)
+            if border_color and border_width > 0:
+                pygame.draw.rect(surface, border_color, rect, border_width, border_radius=radius)
+
+    @classmethod
+    def draw_glass_panel(
+        cls,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        radius: int = 12,
+        border_color: Optional[Tuple[int, ...]] = None,
+        alpha: int = 220,
+    ) -> None:
+        """Renders a translucent glassmorphism container with soft border."""
+        color = (cls.BG_PANEL[0], cls.BG_PANEL[1], cls.BG_PANEL[2], alpha)
+        b_color = border_color if border_color else cls.BORDER_DEFAULT
+        cls.draw_rounded_rect(surface, rect, color, radius=radius, border_color=b_color, border_width=1)
+
+    @classmethod
+    def draw_glow_circle(
+        cls,
+        surface: pygame.Surface,
+        center: Tuple[int, int],
+        radius: int,
+        color: Tuple[int, int, int],
+        glow_radius: int = 10,
+        alpha: int = 120,
+    ) -> None:
+        """Draws a glowing neon aura around a circle."""
+        cx, cy = center
+        total_radius = radius + glow_radius
+        glow_surf = pygame.Surface((total_radius * 2, total_radius * 2), pygame.SRCALPHA)
+
+        # Multi-stage feathering for smooth light diffusion
+        steps = 4
+        for i in range(steps, 0, -1):
+            r = radius + (glow_radius * i // steps)
+            a = int(alpha * (steps - i + 1) / (steps * 2))
+            glow_color = (color[0], color[1], color[2], a)
+            pygame.draw.circle(glow_surf, glow_color, (total_radius, total_radius), r)
+
+        # Inner solid core
+        pygame.draw.circle(glow_surf, color, (total_radius, total_radius), radius)
+        surface.blit(glow_surf, (cx - total_radius, cy - total_radius), special_flags=pygame.BLEND_ALPHA_SDL2)
+
+    @classmethod
+    def draw_badge(
+        cls,
+        surface: pygame.Surface,
+        text: str,
+        pos: Tuple[int, int],
+        bg_color: Tuple[int, int, int],
+        text_color: Tuple[int, int, int] = (255, 255, 255),
+        font_size: int = 12,
+    ) -> pygame.Rect:
+        """Draws a compact pill status badge."""
+        font = cls.get_font(font_size, bold=True)
+        txt_surf = font.render(text.upper(), True, text_color)
+        pad_x, pad_y = 8, 4
+        badge_rect = pygame.Rect(pos[0], pos[1], txt_surf.get_width() + pad_x * 2, txt_surf.get_height() + pad_y * 2)
+        cls.draw_rounded_rect(surface, badge_rect, bg_color, radius=badge_rect.height // 2)
+        surface.blit(txt_surf, (pos[0] + pad_x, pos[1] + pad_y))
+        return badge_rect

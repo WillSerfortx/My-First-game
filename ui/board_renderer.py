@@ -1,314 +1,340 @@
-"""Renders the 10x10 board: cells, curved snakes, ladders, tokens and overlays."""
-from __future__ import annotations
-
-import math
-import time
+"""
+Board Renderer module for AI-Powered Snake & Ladder.
+Renders the 10x10 serpentine board, risk-tinted cells, curved organic snakes with glowing eyes,
+perspective ladders with rails and rungs, and animated player tokens with glowing auras.
+"""
 
 import pygame
-
+import math
+from typing import Tuple, List, Dict, Optional, Any
 from game.board import Board
-from game.constants import BOARD_SIZE, GOAL_CELL, START_CELL
-
-from . import draw, theme
-from .animations import pulse
-from .theme import Color, S, fonts
-
-SNAKE_PALETTES: list[tuple[Color, Color]] = [
-    ((0, 200, 150), (150, 255, 220)), ((255, 122, 60), (255, 206, 150)),
-    ((208, 88, 255), (238, 190, 255)), ((255, 84, 116), (255, 176, 190)),
-    ((88, 172, 255), (176, 218, 255)), ((246, 204, 70), (255, 240, 170)),
-    ((110, 224, 92), (200, 255, 170)), ((255, 122, 196), (255, 200, 232)),
-    ((66, 214, 224), (170, 244, 248)), ((176, 138, 255), (222, 204, 255)),
-]
-
-Frac = tuple[float, float]
+from game.player import Player
+from .theme import Theme
 
 
 class BoardRenderer:
-    """Draws the board inside a square rect; positions are exposed as fractions of the grid
-    so token/path animation is independent of the window size."""
+    """
+    High-fidelity 10x10 Snake & Ladder board renderer.
+    """
 
-    def __init__(self, board: Board, clusterer=None) -> None:
-        self.board = board
-        self.clusterer = clusterer
-        self.rect = pygame.Rect(0, 0, 100, 100)
-        self.grid_rect = pygame.Rect(0, 0, 100, 100)
-        self.cell_px = 10.0
-        self._static: dict[bool, pygame.Surface] = {}
-        self._built_size: tuple[int, int] | None = None
-        self._built_scale = 0.0
-        self._changed_at = 0.0
-        self._scaled_preview: tuple[tuple[int, int], pygame.Surface] | None = None
-        self.snake_paths: dict[int, list[Frac]] = {}
-        self.ladder_paths: dict[int, list[Frac]] = {}
-        self._build_paths()
+    def __init__(self, board: Optional[Board] = None):
+        self.board: Board = board if board is not None else Board()
+        self.board_rect: pygame.Rect = pygame.Rect(0, 0, 700, 700)
+        self.cell_size: float = 70.0
 
-    # ------------------------------------------------------------- geometry
-    @staticmethod
-    def cell_center_frac(cell: int) -> Frac:
-        row, col = Board.cell_to_grid(cell)
-        return ((col + 0.5) / BOARD_SIZE, (BOARD_SIZE - 1 - row + 0.5) / BOARD_SIZE)
+        # Precomputed cell centers and rects
+        self.cell_rects: Dict[int, pygame.Rect] = {}
+        self.cell_centers: Dict[int, Tuple[float, float]] = {}
 
-    def set_rect(self, rect: pygame.Rect) -> None:
-        if rect.size != self.rect.size:
-            self._changed_at = time.time()
-        self.rect = pygame.Rect(rect)
-        pad = S(12)
-        self.grid_rect = self.rect.inflate(-2 * pad, -2 * pad)
-        self.cell_px = self.grid_rect.w / BOARD_SIZE
+    def update_layout(self, rect: pygame.Rect) -> None:
+        """Updates board dimensions and cell boundaries based on available screen rectangle."""
+        self.board_rect = pygame.Rect(rect)
+        self.cell_size = self.board_rect.width / float(self.board.GRID_SIZE)
 
-    def frac_to_screen(self, frac: Frac) -> tuple[float, float]:
-        return (self.grid_rect.x + frac[0] * self.grid_rect.w,
-                self.grid_rect.y + frac[1] * self.grid_rect.h)
+        self.cell_rects = {}
+        self.cell_centers = {}
 
-    def cell_center(self, cell: int) -> tuple[float, float]:
-        return self.frac_to_screen(self.cell_center_frac(cell))
+        for c in range(1, self.board.TOTAL_CELLS + 1):
+            col, row = self.board.get_cell_coordinates(c)
+            x = self.board_rect.x + col * self.cell_size
+            y = self.board_rect.y + row * self.cell_size
+            r = pygame.Rect(int(x), int(y), int(math.ceil(self.cell_size)), int(math.ceil(self.cell_size)))
+            self.cell_rects[c] = r
+            self.cell_centers[c] = (x + self.cell_size / 2.0, y + self.cell_size / 2.0)
 
-    def cell_rect(self, cell: int) -> pygame.Rect:
-        cx, cy = self.cell_center(cell)
-        cs = self.cell_px
-        return pygame.Rect(int(cx - cs / 2), int(cy - cs / 2), int(cs), int(cs))
+    def draw(
+        self,
+        surface: pygame.Surface,
+        human_player: Player,
+        ai_player: Player,
+        cell_zones: Optional[Dict[int, str]] = None,
+        hovered_cell: Optional[int] = None,
+    ) -> None:
+        """Renders the entire game board with all layers."""
+        self._draw_board_background(surface)
+        self._draw_cells(surface, cell_zones, hovered_cell)
+        self._draw_ladders(surface)
+        self._draw_snakes(surface)
+        self._draw_players(surface, human_player, ai_player)
 
-    def cell_at(self, pos: tuple[int, int]) -> int | None:
-        if not self.grid_rect.collidepoint(pos):
-            return None
-        col = int((pos[0] - self.grid_rect.x) / self.cell_px)
-        row_from_top = int((pos[1] - self.grid_rect.y) / self.cell_px)
-        col = max(0, min(BOARD_SIZE - 1, col))
-        row = BOARD_SIZE - 1 - max(0, min(BOARD_SIZE - 1, row_from_top))
-        return Board.grid_to_cell(row, col)
+    def _draw_board_background(self, surface: pygame.Surface) -> None:
+        """Draws the outer frame and board backing."""
+        frame_rect = self.board_rect.inflate(12, 12)
+        Theme.draw_glass_panel(surface, frame_rect, radius=16, border_color=Theme.BORDER_ACCENT, alpha=230)
+        # Inner clipping background
+        pygame.draw.rect(surface, Theme.BG_DARK, self.board_rect, border_radius=12)
 
-    # -------------------------------------------------------- snake / ladder
-    def _build_paths(self) -> None:
-        for i, (head, tail) in enumerate(sorted(self.board.snakes.items())):
-            self.snake_paths[head] = self._snake_path(self.cell_center_frac(head),
-                                                      self.cell_center_frac(tail), i)
-        for bottom, top in self.board.ladders.items():
-            self.ladder_paths[bottom] = [self.cell_center_frac(bottom), self.cell_center_frac(top)]
+    def _draw_cells(
+        self,
+        surface: pygame.Surface,
+        cell_zones: Optional[Dict[int, str]],
+        hovered_cell: Optional[int],
+    ) -> None:
+        """Renders individual 100 cells with numbering and risk zone highlights."""
+        font_num = Theme.get_font(12, bold=True)
+        font_goal = Theme.get_font(14, bold=True)
 
-    @staticmethod
-    def _snake_path(a: Frac, b: Frac, seed: int) -> list[Frac]:
-        dx, dy = b[0] - a[0], b[1] - a[1]
-        length = math.hypot(dx, dy) or 1e-6
-        nx, ny = -dy / length, dx / length
-        waves = max(2.0, length / 0.11)
-        amp = 0.034 if length > 0.15 else 0.02
-        phase = seed * 1.7
-        count = max(30, int(length / 0.005))
-        pts: list[Frac] = []
-        for i in range(count + 1):
-            t = i / count
-            env = math.sin(math.pi * t) ** 0.7
-            off = amp * env * math.sin(t * waves * math.pi + phase)
-            pts.append((a[0] + dx * t + nx * off, a[1] + dy * t + ny * off))
-        return pts
+        for c in range(1, self.board.TOTAL_CELLS + 1):
+            rect = self.cell_rects[c]
+            col, row = self.board.get_cell_coordinates(c)
 
-    # ----------------------------------------------------------- static layer
-    def _zone_color(self, cell: int) -> Color:
-        return theme.ZONE_COLORS.get(self.clusterer.zone_of(cell), theme.BLUE) if self.clusterer else theme.BLUE
+            # Alternating grid shading
+            is_even = (col + row) % 2 == 0
+            base_color = Theme.BG_CELL_LIGHT if is_even else Theme.BG_CELL_DARK
 
-    def _build_static(self, heat: bool) -> pygame.Surface:
-        w, h = self.rect.size
-        surf = pygame.Surface((w, h), pygame.SRCALPHA)
-        frame = pygame.Rect(0, 0, w, h)
-        draw.gradient_rrect(surf, frame, (36, 46, 88), (14, 18, 42), S(24))
-        draw.stroke_rrect(surf, frame, (110, 150, 240, 170), S(24), 2)
-        draw.stroke_rrect(surf, frame.inflate(-S(6), -S(6)), (255, 255, 255, 22), S(21), 1)
-        off = (self.grid_rect.x - self.rect.x, self.grid_rect.y - self.rect.y)
-        cs = self.cell_px
+            # Risk zone tinting from K-Means
+            if cell_zones and c in cell_zones:
+                zone = cell_zones[c]
+                if zone == "Danger":
+                    base_color = (35, 20, 28)
+                elif zone == "Advantage":
+                    base_color = (18, 36, 32)
+                elif zone == "Safe":
+                    base_color = (18, 28, 45)
 
-        def local_rect(cell: int) -> pygame.Rect:
-            u, v = self.cell_center_frac(cell)
-            cx, cy = off[0] + u * self.grid_rect.w, off[1] + v * self.grid_rect.h
-            return pygame.Rect(int(cx - cs / 2), int(cy - cs / 2), int(cs), int(cs))
+            # Cell 100 highlight
+            if c == 100:
+                base_color = (38, 48, 80)
 
-        def local_pt(frac: Frac) -> Frac:
-            return (off[0] + frac[0] * self.grid_rect.w, off[1] + frac[1] * self.grid_rect.h)
+            # Hover highlight
+            border_color = Theme.BORDER_DEFAULT
+            border_w = 1
+            if c == hovered_cell:
+                border_color = Theme.CYAN_HUMAN
+                border_w = 2
 
-        heads, tails = set(self.board.snakes), set(self.board.snakes.values())
-        bottoms, tops = set(self.board.ladders), set(self.board.ladders.values())
-        radius = max(4, int(cs * 0.14))
-        for cell in range(START_CELL, GOAL_CELL + 1):
-            r = local_rect(cell).inflate(-S(3), -S(3))
-            row, col = Board.cell_to_grid(cell)
-            top, bottom = ((34, 44, 82), (24, 31, 62)) if (row + col) % 2 == 0 else ((28, 37, 72), (19, 25, 52))
-            border: Color = (86, 104, 168, 70)
-            if cell in heads:
-                top, bottom, border = (96, 34, 56), (54, 22, 42), (255, 96, 120, 200)
-            elif cell in tails:
-                top, bottom, border = (24, 74, 78), (16, 46, 56), (80, 236, 210, 170)
-            elif cell in bottoms:
-                top, bottom, border = (98, 76, 30), (58, 44, 22), (255, 208, 100, 200)
-            elif cell in tops:
-                top, bottom, border = (26, 84, 62), (16, 52, 44), (100, 248, 170, 170)
-            if cell == GOAL_CELL:
-                top, bottom, border = (190, 148, 52), (110, 76, 34), (255, 226, 140, 255)
-            elif cell == START_CELL:
-                top, bottom, border = (30, 96, 84), (18, 58, 58), (100, 250, 190, 220)
-            if heat:
-                zc = self._zone_color(cell)
-                top = draw.lerp_color(top, zc, 0.42)
-                bottom = draw.lerp_color(bottom, zc, 0.30)
-                border = draw.with_alpha(zc, 180)
-            draw.gradient_rrect(surf, r, top, bottom, radius)
-            draw.stroke_rrect(surf, r, border, radius, 2 if (cell in heads | tails | bottoms | tops or cell in (1, 100)) else 1)
+            pygame.draw.rect(surface, base_color, rect)
+            pygame.draw.rect(surface, border_color, rect, border_w)
 
-        for bottom_cell, top_cell in self.board.ladders.items():
-            self._draw_ladder(surf, [local_pt(p) for p in self.ladder_paths[bottom_cell]])
-        for i, head in enumerate(sorted(self.board.snakes)):
-            self._draw_snake(surf, [local_pt(p) for p in self.snake_paths[head]], SNAKE_PALETTES[i % 10])
-
-        nf = fonts.get(cs / theme.get_scale() * 0.21, True)
-        for cell in range(START_CELL, GOAL_CELL + 1):
-            r = local_rect(cell)
-            draw.draw_text(surf, str(cell), nf, (198, 210, 244), (r.x + S(8), r.y + S(6)), shadow=True)
-            if cell == GOAL_CELL:
-                draw.draw_star(surf, r.centerx, r.centery + S(2), cs * 0.22, (255, 240, 170))
-                draw.draw_text(surf, "GOAL", fonts.get(cs / theme.get_scale() * 0.17, True),
-                               (60, 40, 10), (r.centerx, r.bottom - S(9)), "midbottom")
-            elif cell == START_CELL:
-                draw.draw_text(surf, "START", fonts.get(cs / theme.get_scale() * 0.17, True),
-                               theme.GREEN, (r.centerx, r.bottom - S(9)), "midbottom", shadow=True)
-            elif cell in heads:
-                draw.draw_chevron(surf, r.right - S(15), r.bottom - S(14), cs * 0.09, (255, 130, 146), up=False, width=max(2, S(2)))
-            elif cell in bottoms:
-                draw.draw_chevron(surf, r.right - S(15), r.bottom - S(14), cs * 0.09, (255, 220, 130), up=True, width=max(2, S(2)))
-        return surf
-
-    def _draw_ladder(self, surf: pygame.Surface, pts: list[Frac]) -> None:
-        (x0, y0), (x1, y1) = pts[0], pts[-1]
-        dx, dy = x1 - x0, y1 - y0
-        length = math.hypot(dx, dy) or 1.0
-        ux, uy = dx / length, dy / length
-        nx, ny = -uy, ux
-        half = self.cell_px * 0.13
-        rail = max(3, int(self.cell_px * 0.065))
-        wood, wood_dark, wood_light = (236, 190, 108), (98, 62, 26), (255, 232, 170)
-        left = ((x0 + nx * half, y0 + ny * half), (x1 + nx * half, y1 + ny * half))
-        right = ((x0 - nx * half, y0 - ny * half), (x1 - nx * half, y1 - ny * half))
-        for a, b in (left, right):                               # soft shadow
-            pygame.draw.line(surf, (12, 16, 30), (a[0] + 2, a[1] + 3), (b[0] + 2, b[1] + 3), rail + 2)
-        rungs = max(3, int(length / (self.cell_px * 0.34)))
-        for i in range(1, rungs):
-            t = i / rungs
-            cx, cy = x0 + dx * t, y0 + dy * t
-            pygame.draw.line(surf, wood_dark, (cx + nx * half, cy + ny * half), (cx - nx * half, cy - ny * half), max(3, rail))
-            pygame.draw.line(surf, wood, (cx + nx * half, cy + ny * half), (cx - nx * half, cy - ny * half), max(2, rail - 2))
-        for a, b in (left, right):
-            pygame.draw.line(surf, wood_dark, a, b, rail + 2)
-            pygame.draw.line(surf, wood, a, b, rail)
-            pygame.draw.line(surf, wood_light, (a[0] - nx, a[1] - ny), (b[0] - nx, b[1] - ny), max(1, rail // 3))
-        for p in ((x0, y0), (x1, y1)):
-            draw.draw_glow(surf, p, self.cell_px * 0.36, theme.GOLD, 110)
-            pygame.draw.circle(surf, wood_dark, (int(p[0]), int(p[1])), max(4, int(self.cell_px * 0.10)))
-            pygame.draw.circle(surf, wood_light, (int(p[0]), int(p[1])), max(3, int(self.cell_px * 0.07)))
-
-    def _draw_snake(self, surf: pygame.Surface, pts: list[Frac], palette: tuple[Color, Color]) -> None:
-        base, light = palette
-        dark = draw.darken(base, 0.55)
-        n = len(pts)
-        cs = self.cell_px
-        for i in range(n - 1, -1, -1):                            # shadow + outline, tail first
-            t = i / max(1, n - 1)
-            r = cs * (0.150 - 0.105 * t ** 0.85)
-            pygame.draw.circle(surf, (10, 14, 26), (int(pts[i][0] + 2), int(pts[i][1] + 3)), int(r + 2))
-        for i in range(n - 1, -1, -1):
-            t = i / max(1, n - 1)
-            r = cs * (0.150 - 0.105 * t ** 0.85)
-            pygame.draw.circle(surf, dark, (int(pts[i][0]), int(pts[i][1])), int(r + 1.5))
-        for i in range(n - 1, -1, -1):
-            t = i / max(1, n - 1)
-            r = cs * (0.150 - 0.105 * t ** 0.85)
-            band = (i // 5) % 2 == 0
-            col = base if band else draw.lerp_color(base, light, 0.35)
-            pygame.draw.circle(surf, col, (int(pts[i][0]), int(pts[i][1])), max(1, int(r)))
-            if i % 5 == 2:
-                pygame.draw.circle(surf, draw.lerp_color(col, light, 0.6),
-                                   (int(pts[i][0] - r * 0.25), int(pts[i][1] - r * 0.3)), max(1, int(r * 0.35)))
-        # head
-        hx, hy = pts[0]
-        fx, fy = pts[min(4, n - 1)]
-        dx, dy = hx - fx, hy - fy
-        d = math.hypot(dx, dy) or 1.0
-        ux, uy = dx / d, dy / d
-        nx, ny = -uy, ux
-        hr = cs * 0.185
-        tongue_base = (hx + ux * hr * 0.9, hy + uy * hr * 0.9)
-        tongue_end = (hx + ux * hr * 1.9, hy + uy * hr * 1.9)
-        pygame.draw.line(surf, (255, 70, 96), tongue_base, tongue_end, max(1, int(cs * 0.03)))
-        for s in (-1, 1):
-            pygame.draw.line(surf, (255, 70, 96), tongue_end,
-                             (tongue_end[0] + ux * hr * 0.35 + nx * s * hr * 0.35,
-                              tongue_end[1] + uy * hr * 0.35 + ny * s * hr * 0.35), max(1, int(cs * 0.025)))
-        pygame.draw.circle(surf, dark, (int(hx), int(hy)), int(hr + 1.5))
-        pygame.draw.circle(surf, draw.lerp_color(base, light, 0.2), (int(hx), int(hy)), int(hr))
-        for s in (-1, 1):
-            ex, ey = hx + ux * hr * 0.28 + nx * s * hr * 0.5, hy + uy * hr * 0.28 + ny * s * hr * 0.5
-            pygame.draw.circle(surf, (255, 255, 255), (int(ex), int(ey)), max(2, int(hr * 0.30)))
-            pygame.draw.circle(surf, (20, 10, 30), (int(ex + ux * hr * 0.08), int(ey + uy * hr * 0.08)), max(1, int(hr * 0.15)))
-
-    # ------------------------------------------------------------ dynamic draw
-    def draw(self, surface: pygame.Surface, t: float, heat: bool = False) -> None:
-        size = self.rect.size
-        if self._built_size != size or self._built_scale != theme.get_scale():
-            stable = time.time() - self._changed_at > 0.25
-            if self._built_size is None or stable or not self._static.get(heat):
-                self._static = {}
-                self._built_size, self._built_scale = size, theme.get_scale()
-                self._scaled_preview = None
+            # Cell number
+            if c == 100:
+                t_surf = font_goal.render("100 ★", True, Theme.AMBER_SHIELD)
+                surface.blit(t_surf, (rect.x + 4, rect.y + 4))
+            elif c == 1:
+                t_surf = font_num.render("1 START", True, Theme.CYAN_HUMAN)
+                surface.blit(t_surf, (rect.x + 4, rect.y + 4))
             else:
-                # while the window is being dragged show the old bitmap, scaled
-                old = self._static[heat]
-                if self._scaled_preview is None or self._scaled_preview[0] != size:
-                    self._scaled_preview = (size, pygame.transform.smoothscale(old, size))
-                draw.draw_shadow(surface, self.rect, S(24), S(22), 130, S(8))
-                surface.blit(self._scaled_preview[1], self.rect.topleft)
-                return
-        if heat not in self._static:
-            self._static[heat] = self._build_static(heat)
-        glow_a = 44 + int(16 * pulse(t, 0.4))
-        draw.draw_glow_rect(surface, self.rect, theme.CYAN, S(24), S(26), glow_a)
-        draw.draw_shadow(surface, self.rect, S(24), S(22), 130, S(8))
-        surface.blit(self._static[heat], self.rect.topleft)
+                t_surf = font_num.render(str(c), True, Theme.TEXT_MUTED)
+                surface.blit(t_surf, (rect.x + 5, rect.y + 4))
 
-    # -------------------------------------------------------------- overlays
-    def draw_cell_ring(self, surface: pygame.Surface, cell: int, color: Color, t: float,
-                       strength: float = 1.0) -> None:
-        r = self.cell_rect(cell).inflate(-S(2), -S(2))
-        p = pulse(t, 1.2)
-        draw.draw_glow_rect(surface, r, color, max(4, int(self.cell_px * 0.14)), S(12),
-                            int((70 + 90 * p) * strength))
-        draw.stroke_rrect(surface, r, draw.with_alpha(color, int(200 * strength)),
-                          max(4, int(self.cell_px * 0.14)), max(2, S(3)))
+            # Icon badges on snake head/ladder bottom
+            if self.board.is_snake_head(c):
+                # Snake icon indicator
+                tail = self.board.get_snake_tail(c)
+                ind_font = Theme.get_font(10, bold=True)
+                s_surf = ind_font.render(f"▼{tail}", True, Theme.RED_DANGER)
+                surface.blit(s_surf, (rect.right - s_surf.get_width() - 4, rect.bottom - s_surf.get_height() - 3))
+            elif self.board.is_ladder_bottom(c):
+                # Ladder icon indicator
+                top = self.board.get_ladder_top(c)
+                ind_font = Theme.get_font(10, bold=True)
+                l_surf = ind_font.render(f"▲{top}", True, Theme.GREEN_ADVANTAGE)
+                surface.blit(l_surf, (rect.right - l_surf.get_width() - 4, rect.bottom - l_surf.get_height() - 3))
 
-    def draw_destination_marker(self, surface: pygame.Surface, cell: int, color: Color, t: float,
-                                label: str = "") -> None:
-        self.draw_cell_ring(surface, cell, color, t, 0.9)
-        cx, cy = self.cell_center(cell)
-        bob = math.sin(t * 5) * S(3)
-        if label:
-            font = fonts.get(12, True)
-            tw = font.size(label)[0]
-            bubble = pygame.Rect(0, 0, tw + S(16), S(22))
-            bubble.midbottom = (int(cx), int(cy - self.cell_px * 0.34 + bob))
-            draw.fill_rrect(surface, bubble, (10, 14, 34, 235), bubble.h // 2)
-            draw.stroke_rrect(surface, bubble, draw.with_alpha(color, 220), bubble.h // 2, 1)
-            draw.draw_text(surface, label, font, theme.TEXT, bubble.center, "center")
+    def _draw_ladders(self, surface: pygame.Surface) -> None:
+        """Renders 9 dual-rail glowing ladders with cross rungs."""
+        ladder_width = 14.0
 
-    def draw_route(self, surface: pygame.Surface, cells: tuple[int, ...], color: Color, t: float) -> None:
-        """Animated dashed route through ``cells`` (BFS / A* path overlay)."""
-        pts = [self.cell_center(c) for c in cells]
-        for a, b in zip(pts, pts[1:]):
-            draw.dashed_line(surface, color, a, b, S(8), S(6), t * S(40), max(2, S(3)))
-        for i, (x, y) in enumerate(pts):
-            draw.draw_glow(surface, (x, y), S(14), color, 120)
-            pygame.draw.circle(surface, color, (int(x), int(y)), max(3, S(4)))
+        for bottom, top in self.board.ladders.items():
+            start_x, start_y = self.cell_centers[bottom]
+            end_x, end_y = self.cell_centers[top]
 
-    def draw_token(self, surface: pygame.Surface, frac: Frac, color: Color, t: float,
-                   lift: float = 0.0, x_offset: float = 0.0, phase: float = 0.0,
-                   scale: float = 1.0) -> None:
-        x, y = self.frac_to_screen(frac)
-        bob = math.sin(t * 3.2 + phase) * self.cell_px * 0.035
-        r = self.cell_px * 0.155 * scale
-        draw.draw_pawn(surface, x + x_offset, y + self.cell_px * 0.22, r, color,
-                       glow_alpha=150, lift=lift + bob + self.cell_px * 0.05)
+            dx = end_x - start_x
+            dy = end_y - start_y
+            length = math.hypot(dx, dy)
+            if length < 1e-4:
+                continue
+
+            # Unit normal vector
+            nx = -dy / length
+            ny = dx / length
+
+            # Left and right rail endpoints
+            lx1 = start_x + nx * (ladder_width / 2.0)
+            ly1 = start_y + ny * (ladder_width / 2.0)
+            lx2 = end_x + nx * (ladder_width / 2.0)
+            ly2 = end_y + ny * (ladder_width / 2.0)
+
+            rx1 = start_x - nx * (ladder_width / 2.0)
+            ry1 = start_y - ny * (ladder_width / 2.0)
+            rx2 = end_x - nx * (ladder_width / 2.0)
+            ry2 = end_y - ny * (ladder_width / 2.0)
+
+            # Draw glowing outer rails
+            glow_color = (16, 185, 129, 90)
+            rail_color = Theme.GREEN_LADDER
+            highlight_color = (167, 243, 208)
+
+            pygame.draw.line(surface, rail_color, (lx1, ly1), (lx2, ly2), 4)
+            pygame.draw.line(surface, rail_color, (rx1, ry1), (rx2, ry2), 4)
+
+            # Inner rail core
+            pygame.draw.line(surface, highlight_color, (lx1, ly1), (lx2, ly2), 1)
+            pygame.draw.line(surface, highlight_color, (rx1, ry1), (rx2, ry2), 1)
+
+            # Draw rungs
+            rung_spacing = 22.0
+            num_rungs = max(2, int(length // rung_spacing))
+            for i in range(1, num_rungs):
+                t = i / float(num_rungs)
+                # Left point at t
+                r_lx = lx1 + t * (lx2 - lx1)
+                r_ly = ly1 + t * (ly2 - ly1)
+                # Right point at t
+                r_rx = rx1 + t * (rx2 - rx1)
+                r_ry = ry1 + t * (ry2 - ry1)
+
+                pygame.draw.line(surface, rail_color, (r_lx, r_ly), (r_rx, r_ry), 3)
+                pygame.draw.line(surface, highlight_color, (r_lx, r_ly), (r_rx, r_ry), 1)
+
+            # Small foot/top caps
+            pygame.draw.circle(surface, rail_color, (int(start_x), int(start_y)), 5)
+            pygame.draw.circle(surface, rail_color, (int(end_x), int(end_y)), 5)
+
+    def _draw_snakes(self, surface: pygame.Surface) -> None:
+        """Renders 10 curved serpentine snakes with glowing heads and eyes."""
+        for head, tail in self.board.snakes.items():
+            hx, hy = self.cell_centers[head]
+            tx, ty = self.cell_centers[tail]
+
+            dx = tx - hx
+            dy = ty - hy
+            dist = math.hypot(dx, dy)
+            if dist < 1e-4:
+                continue
+
+            # Perpendicular vector for wave curves
+            nx = -dy / dist
+            ny = dx / dist
+
+            # Sine wave curve points
+            num_points = max(15, int(dist // 8))
+            points: List[Tuple[float, float]] = []
+            wave_amp = min(28.0, dist * 0.18)
+            cycles = 2.5 if dist > 200 else 1.5
+
+            for i in range(num_points + 1):
+                t = i / float(num_points)
+                # Straight line interpolation
+                bx = hx + t * dx
+                by = hy + t * dy
+                # Sinusoidal wiggle that tapers to 0 at both head and tail
+                envelope = math.sin(t * math.pi)
+                wiggle = math.sin(t * cycles * 2 * math.pi) * wave_amp * envelope
+                px = bx + nx * wiggle
+                py = by + ny * wiggle
+                points.append((px, py))
+
+            # Draw layered tapered body
+            for i in range(len(points) - 1):
+                t = i / float(len(points))
+                # Taper body width from 8 at head to 2 at tail
+                w = max(2, int(8 * (1.0 - t * 0.75)))
+                p1 = points[i]
+                p2 = points[i + 1]
+                # Body color gradient
+                body_color = Theme.RED_SNAKE
+                pygame.draw.line(surface, body_color, p1, p2, w + 2)
+                pygame.draw.line(surface, (254, 202, 202), p1, p2, max(1, w // 2))
+
+            # Snake Head
+            head_radius = 9
+            pygame.draw.circle(surface, Theme.RED_SNAKE, (int(hx), int(hy)), head_radius)
+            pygame.draw.circle(surface, (185, 28, 28), (int(hx), int(hy)), head_radius, 2)
+
+            # Glowing eyes
+            # Eye offset toward tail direction
+            eye_angle = math.atan2(dy, dx) + math.pi
+            eye_dist = 4
+            eye1_x = int(hx + math.cos(eye_angle + 0.6) * eye_dist)
+            eye1_y = int(hy + math.sin(eye_angle + 0.6) * eye_dist)
+            eye2_x = int(hx + math.cos(eye_angle - 0.6) * eye_dist)
+            eye2_y = int(hy + math.sin(eye_angle - 0.6) * eye_dist)
+
+            pygame.draw.circle(surface, Theme.AMBER_SHIELD, (eye1_x, eye1_y), 2)
+            pygame.draw.circle(surface, Theme.AMBER_SHIELD, (eye2_x, eye2_y), 2)
+
+            # Tail tip
+            pygame.draw.circle(surface, Theme.RED_SNAKE, (int(tx), int(ty)), 3)
+
+    def _draw_players(self, surface: pygame.Surface, human: Player, ai: Player) -> None:
+        """Renders animated player pieces with neon orbs, rings, and smooth interpolation."""
+        # Calculate human screen position
+        h_pos = self._get_interpolated_pos(human.visual_cell)
+        ai_pos = self._get_interpolated_pos(ai.visual_cell)
+
+        # If both players are at the exact same location, slightly offset them horizontally
+        dist_between = math.hypot(h_pos[0] - ai_pos[0], h_pos[1] - ai_pos[1])
+        offset = 12.0 if dist_between < 10.0 else 0.0
+
+        # Human Piece (Cyan theme)
+        h_draw_pos = (h_pos[0] - offset, h_pos[1])
+        self._render_single_player(
+            surface=surface,
+            pos=h_draw_pos,
+            color=Theme.CYAN_HUMAN,
+            glow_color=Theme.CYAN_HUMAN_GLOW,
+            label="H",
+            glow_phase=human.glow_timer,
+        )
+
+        # AI Piece (Purple theme)
+        ai_draw_pos = (ai_pos[0] + offset, ai_pos[1])
+        self._render_single_player(
+            surface=surface,
+            pos=ai_draw_pos,
+            color=Theme.PURPLE_AI,
+            glow_color=Theme.PURPLE_AI_GLOW,
+            label="AI",
+            glow_phase=ai.glow_timer,
+        )
+
+    def _render_single_player(
+        self,
+        surface: pygame.Surface,
+        pos: Tuple[float, float],
+        color: Tuple[int, int, int],
+        glow_color: Tuple[int, int, int],
+        label: str,
+        glow_phase: float,
+    ) -> None:
+        """Renders a single player token with pulsing neon glow and center letter."""
+        cx, cy = int(pos[0]), int(pos[1])
+        radius = max(10, int(self.cell_size * 0.22))
+
+        # Pulsing ring calculation
+        pulse = (math.sin(glow_phase * 4.0) + 1.0) * 0.5  # 0.0 to 1.0
+        glow_radius = int(8 + pulse * 6)
+
+        # Outer glow
+        Theme.draw_glow_circle(surface, (cx, cy), radius, color, glow_radius=glow_radius, alpha=100)
+
+        # Inner solid orb
+        pygame.draw.circle(surface, color, (cx, cy), radius)
+        # White highlight crescent
+        pygame.draw.circle(surface, (255, 255, 255), (cx - 2, cy - 2), max(2, radius // 3))
+
+        # Token text label
+        font = Theme.get_font(11, bold=True)
+        txt = font.render(label, True, Theme.BG_DARK)
+        surface.blit(txt, (cx - txt.get_width() // 2, cy - txt.get_height() // 2 + 1))
+
+    def _get_interpolated_pos(self, cell_val: float) -> Tuple[float, float]:
+        """Linearly interpolates coordinates between cell floor and ceil."""
+        c1 = max(1, min(self.board.TOTAL_CELLS, int(math.floor(cell_val))))
+        c2 = max(1, min(self.board.TOTAL_CELLS, int(math.ceil(cell_val))))
+        frac = cell_val - math.floor(cell_val)
+
+        p1 = self.cell_centers[c1]
+        p2 = self.cell_centers[c2]
+
+        x = p1[0] + frac * (p2[0] - p1[0])
+        y = p1[1] + frac * (p2[1] - p1[1])
+        return x, y
+
+    def get_cell_at_pos(self, pos: Tuple[int, int]) -> Optional[int]:
+        """Returns the cell number (1..100) colliding with screen mouse coordinates."""
+        for c, rect in self.cell_rects.items():
+            if rect.collidepoint(pos):
+                return c
+        return None

@@ -1,13 +1,8 @@
-# AI-Powered Snake & Ladder
+# AI-Powered Snake & Ladder: Strategic Gameplay with Intelligent Decision-Making
 
-[![Play Online](https://img.shields.io/badge/Play%20Online-GitHub%20Pages-blue?style=for-the-badge&logo=github)](https://willserfortx.github.io/ai_snake_ladder/)
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
+A university AI Lab project integrating classical search algorithms and statistical machine learning into an intelligent, modern desktop board game. Built **100% in Python** using **Pygame**, **NumPy**, and **scikit-learn**.
 
-> 🎮 **Play Instantly in Your Browser:** **[https://willserfortx.github.io/ai_snake_ladder/](https://willserfortx.github.io/ai_snake_ladder/)**  
-> *No downloads or Python installations required. Full desktop and mobile support with real-time AI decision visualization.*
-
-**Strategic Gameplay with Intelligent Decision-Making** - a game powered by four AI / search / machine-learning techniques: **BFS, A\*, Logistic Regression, and K-Means**. Playable as a desktop application (Pygame) or directly online in any modern web browser via GitHub Pages.
+---
 
 ## 🎬 Gameplay Demo
 
@@ -15,140 +10,204 @@
   <video src="assets/demo.mov" width="100%" controls="controls"></video>
 </p>
 
-> 📹 **Watch Video:** If inline playback is not supported by your browser, you can [view or download the video directly](assets/demo.mov) or [download the video from Releases](https://github.com/WillSerfortx/ai_snake_ladder/releases/download/v1.0.0/Screen_Recording.mov).
+> 📹 **Watch Video:** If inline playback is not supported by your browser, you can [view or download the video directly](assets/demo.mov) or [download from Releases](https://github.com/WillSerfortx/ai_snake_ladder/releases/download/v1.0.0/Screen_Recording.mov).
 
-## Description
+---
 
-**The traditional problem.** In classic Snake & Ladder the dice decide everything - there is no
-decision to make. This project turns the game into a strategy problem:
+## 1. Project Overview
 
-* **Dual dice** - every turn two dice are rolled and the player chooses *one* of the two values.
-  Exact finish is required: a die that would overshoot cell 100 cannot be played (if neither die is
-  playable the turn is skipped).
-* **Shields** - each player owns **2 shields**. When a move ends on a snake head the player may spend a
-  shield to block the snake; the piece then stays on the snake-head cell. The human is asked (with an
-  AI advisor hint); the AI decides by itself and explains why.
-* **Graph-based board** - the 10x10 board (10 snakes, 9 ladders, boustrophedon numbering) is a directed
-  graph with an adjacency list (`Board.graph[cell]`); snake/ladder redirections are baked into the edges
-  and shared by BFS, A*, feature extraction and the simulator.
-* **Transparent AI** - the AI Analysis panel shows both candidate moves, their A* score, Logistic
-  Regression win probability, K-Means risk zone and final weighted score, then announces its choice.
+Traditional Snake & Ladder is purely stochastic, offering zero player agency: dice rolls dictate every move deterministically until someone reaches cell 100.
 
-## AI techniques (four)
+**AI-Powered Snake & Ladder** transforms this classic children's game into an authentic **decision-making problem under uncertainty**:
+1. **Dual-Dice Choice**: Every turn, two independent $d6$ dice are rolled. The active player must evaluate both outcomes and select one to execute.
+2. **Shield Power-Ups**: Each player starts with **2 shields** that can be strategically deployed to block a snake and preserve board position.
+3. **Directed Graph Board**: The 100-cell board is modeled as an adjacency-list directed graph with overshoot bounce-back mechanics.
+4. **Transparent AI Decision Engine**: Rather than relying on black-box decisions, the AI analyzes both candidate dice in real time across four distinct AI techniques and displays its full quantitative evaluation to the player.
 
-### BFS - shortest path analysis
-`ai/bfs.py`. BFS runs from **every** cell to cell 100 over the board graph and stores
-`min_rolls[cell]` (best case, snakes and ladders included; cell 1 needs 7 rolls on the default board).
-It is displayed in the UI ("Minimum Rolls to Goal"), can be drawn as a route on the board (`P`), and
-serves as the heuristic for A*.
+---
 
-### A\* - strategic candidate evaluation
-`ai/astar.py`. For each candidate destination A* searches the *safest fast route* to cell 100:
-routes may not land on snake heads and each step costs `1 + snakes_within_6(next cell) / 6`
-(one roll plus the chance the next roll meets a snake). The heuristic is the BFS table, which is
-admissible and consistent. The route cost is normalised to `0.0 - 1.0` (`1 - cost / max_cost`,
-goal = 1.0); higher is better.
+## 2. The Four AI / Search / ML Techniques
 
-### Logistic Regression - win-probability prediction
-`ai/data_generator.py`, `ai/logistic_model.py`. **10,000 random games** (two random players using the
-real rules) are simulated. Every visited cell yields five features:
+The system integrates four core AI methods:
 
-| feature | meaning |
-|---|---|
-| `dist_to_snake` | cells to the nearest snake head ahead (capped at 12) |
-| `dist_to_ladder` | cells to the nearest ladder bottom ahead (capped at 12) |
-| `snakes_within_6` | snake heads within one die roll ahead |
-| `ladders_within_6` | ladder bottoms within one die roll ahead |
-| `position_pct` | board progress, 0-100 |
-
-The label is `won = 1` if that player eventually won the game, else `0`. A scikit-learn pipeline
-(`StandardScaler` + `LogisticRegression`) is trained on 80 % of the *games* and evaluated on the unseen
-20 %; the AI Lab shows accuracy, majority baseline, ROC AUC, precision/recall/F1, the confusion matrix
-and probability examples - all calculated, none invented. Because both players in the simulation act
-randomly, the labels are noisy and accuracy is modest by nature; the model is still a genuine, trained
-predictor whose probability rises with progress and falls near snakes.
-
-### K-Means - risk-zone clustering and heat-map
-`ai/kmeans_model.py`. K-Means with **K = 3** clusters the 100 cells on their five (standardised)
-features. Clusters are named from measured properties: every cell gets
-`hazard = (snakes_within_6 - ladders_within_6) + (1/dist_to_snake - 1/dist_to_ladder)`; clusters are
-ranked by mean hazard -> **DANGER** (highest), **SAFE**, **ADVANTAGE** (lowest). K-Means provides the
-risk heat-map (`H` in game, AI Lab screen) and the risk zone shown next to every candidate. It is
-analytical information only and is *not* part of the score.
-
-### Final decision
 ```
-final_score = 0.60 * A*_score + 0.40 * logistic_win_probability
+                  ┌───────────────────────────────┐
+                  │          DUAL DICE            │
+                  │        (Dice 1, Dice 2)       │
+                  └──────────────┬────────────────┘
+                                 │
+                 ┌───────────────┴───────────────┐
+                 ▼                               ▼
+          [ Candidate A ]                 [ Candidate B ]
+                 │                               │
+        ┌────────┴────────┐             ┌────────┴────────┐
+        ▼                 ▼             ▼                 ▼
+   A* Pathfinding    Logistic Reg    A* Pathfinding    Logistic Reg
+    (60% Weight)     (40% Weight)     (60% Weight)     (40% Weight)
+        │                 │             │                 │
+        └────────┬────────┘             └────────┬────────┘
+                 ▼                               ▼
+          Final Score A                   Final Score B
+                 │                               │
+                 └───────────────┬───────────────┘
+                                 ▼
+                     Highest Score Selected
+                     (With K-Means Risk Map &
+                      Strategic Shield Evaluation)
 ```
-The AI plays the die with the higher score. Two rules sit around the formula: a die that overshoots is
-illegal, and a die that reaches cell 100 is played immediately. Shield use: the AI compares the benefit of
-keeping the snake-head cell (same 60/40 blend) with a reserve threshold that is higher when fewer shields
-remain and halves in the end-game (cells >= 75).
 
-## Training pipeline
-```
-data generation -> feature extraction -> training dataset -> Logistic Regression -> K-Means
-                -> saved models / cached results -> game AI
-```
-The pipeline runs once in a background thread while the menu is shown, then everything is cached in
-`data/` (`training_data.npz`, `models.pkl`, plus a readable `training_sample.csv`). The cache is
-invalidated automatically when the board layout or pipeline version changes. Individual moves only do
-table look-ups, so the game stays responsive.
+### 1. BFS (Breadth-First Search) — Shortest Path Analysis
+* **Implementation**: `ai/bfs.py`
+* **Purpose**: Operates on the directed board graph (incorporating ladders and snakes) to calculate the exact minimum number of rolls required to reach cell 100 from every cell on the board ($1 \dots 100$).
+* **Results**: Cell 100 requires $0$ rolls. Starting at Cell 1 requires approximately $7$ rolls under optimal conditions.
+* **Role**: Serves as the precomputed admissible heuristic lookup table for A* search and provides strategic proximity data for game analytics.
 
-## Architecture
-```
-ai_snake_ladder/
-|-- main.py                 entry point
-|-- game/                   pure game logic (no UI, no AI)
-|   |-- constants.py  board.py  player.py  dice.py  rules.py  game_engine.py
-|-- ai/                     search + machine learning
-|   |-- bfs.py  astar.py  features.py  data_generator.py
-|   |-- logistic_model.py  kmeans_model.py  pipeline.py  decision_engine.py
-|-- ui/                     Pygame interface
-|   |-- app.py              window, resize handling, background AI loading, main loop
-|   |-- screens.py          Home, How It Works, AI Lab
-|   |-- game_screen.py      in-game screen and turn state machine
-|   |-- board_renderer.py   board, curved snakes, ladders, tokens, overlays
-|   |-- widgets.py          Button, Panel, Card, ProgressBar, DiceWidget, StatCard, EventLog,
-|   |                       HeatmapCell, DecisionScoreBar, StatusBadge, Tooltip, Modal, Toast, MiniChart
-|   |-- animations.py  particles.py  audio.py  draw.py  theme.py
-|-- assets/  data/  tests/
-```
-Design rules: game logic never imports the UI; the UI never contains AI maths; animation is
-delta-time based; expensive surfaces (gradients, glows, panels, text) are cached.
+### 2. A* Pathfinding — Strategic Candidate Evaluation
+* **Implementation**: `ai/astar.py`
+* **Purpose**: Evaluates candidate move destinations $s'$ using the cost function $f(s') = g(s') + h(s')$.
+  * $g(s') = 1.0$ (step cost of one dice roll).
+  * $h(s') = \text{min\_rolls}[s']$ (admissible BFS shortest path heuristic).
+* **Normalized Score**: Produces an objective score in $[0.0, 1.0]$ based on heuristic distance to goal, board progress percentage, ladder capture rewards, and snake avoidance.
 
-## Installation
-Python 3.11 or newer.
+### 3. Logistic Regression — Win Probability Estimation
+* **Implementation**: `ai/logistic_model.py`
+* **Training Pipeline**: Trained on a dataset extracted from **10,000 simulated games** (`ai/data_generator.py`), capturing every visited cell and whether the player won ($1$) or lost ($0$).
+* **The 5 Extracted Cell Features**:
+  1. `dist_to_snake`: Forward distance to nearest snake head ahead.
+  2. `dist_to_ladder`: Forward distance to nearest ladder base ahead.
+  3. `snakes_within_6`: Count of snake heads in immediate roll range ($c+1 \dots c+6$).
+  4. `ladders_within_6`: Count of ladder bases in immediate roll range ($c+1 \dots c+6$).
+  5. `position_pct`: Cell progress as a board percentage ($c / 100.0$).
+* **Output**: Calibrated win probability $P(\text{win} \mid \mathbf{x}) \in [0.0, 1.0]$. Real validation metrics (accuracy, confusion matrix, coefficients) are viewable in the AI Lab screen.
+
+### 4. K-Means Clustering ($K=3$) — Strategic Risk Heatmap
+* **Implementation**: `ai/kmeans_model.py`
+* **Purpose**: Unsupervised clustering of all 100 cells across the 5 strategic features into $K=3$ distinct risk zones:
+  * **Danger**: Characterized by high `snakes_within_6` and low `dist_to_snake`.
+  * **Safe**: Stable transit zones with low immediate threat density.
+  * **Advantage**: Characterized by high ladder opportunities and advanced board progress.
+* **Analytical Visualization**: Renders an interactive 100-cell risk heatmap on both the game board and the dedicated AI Lab analytics dashboard.
+
+---
+
+## 3. The AI Decision Engine Formula
+
+For candidate moves $A$ and $B$, the AI evaluates both states using the weighted formula:
+
+$$\text{final\_score} = 0.60 \times \text{astar\_score} + 0.40 \times \text{logistic\_probability}$$
+
+The candidate with the higher score is automatically executed. 
+
+### Strategic Shield Decision
+If the chosen move lands on a snake head, the AI calculates the position loss:
+
+$$\Delta_{\text{loss}} = \text{snake\_head} - \text{snake\_tail}$$
+
+If $\Delta_{\text{loss}} \ge 15$ cells or the game is in the endgame ($\text{cell} \ge 65$) and shields remain, the AI expends 1 shield to neutralize the snake and hold its position.
+
+---
+
+## 4. Visual Design & User Interface
+
+* **Dark Glassmorphism Theme**: Cyber navy background (`#0B0F19`), translucent elevated panels, and glowing neon accents.
+* **Player Styling**:
+  * **Human**: Electric Cyan (`#06B6D4`)
+  * **AI**: Cyber Purple (`#A855F7`)
+* **Dynamic Animations**:
+  * Alternating boustrophedon 10x10 board with curved sinusoidal snake bodies and perspective glowing ladders.
+  * Cell-by-cell smooth token interpolation with trail effects.
+  * 3D pip dice widgets with rotational roll physics.
+  * Real-time score comparison bars.
+* **Procedural Sound**: Audio is synthesized dynamically in memory using Python's standard `wave` library—no external audio files required.
+
+---
+
+## 5. Project Architecture
+
+```
+my_snake_and_ladders/
+├── main.py                     # Window management & 60 FPS main loop
+├── requirements.txt            # Project dependencies
+├── README.md                   # University documentation
+│
+├── game/
+│   ├── __init__.py
+│   ├── board.py                # 10x10 grid, 10 snakes, 9 ladders, directed graph
+│   ├── player.py               # Player state, shields, animation path interpolation
+│   ├── dice.py                 # Dual-dice roll mechanics, physics, and pip maps
+│   ├── rules.py                # Overshoot bounce, ladder/snake, shield logic
+│   └── game_engine.py          # State machine, turns, and event logging
+│
+├── ai/
+│   ├── __init__.py
+│   ├── bfs.py                  # BFS shortest path & min rolls lookup table
+│   ├── astar.py                # A* state scoring (0.0 - 1.0)
+│   ├── features.py             # 5 cell features extractor
+│   ├── data_generator.py       # 10,000 game simulation pipeline
+│   ├── logistic_model.py       # Logistic Regression win probability predictor
+│   ├── kmeans_model.py         # K-Means (K=3) risk clustering & heatmap
+│   └── decision_engine.py      # Dual candidate evaluation & 60/40 weighted formula
+│
+├── ui/
+│   ├── __init__.py
+│   ├── theme.py                # Dark glassmorphism palette, fonts, glow utilities
+│   ├── widgets.py              # Button, Card, Dice, Shield, ScoreBar, EventLog, Modal
+│   ├── board_renderer.py       # Board graphics, curved snakes, glowing ladders, tokens
+│   ├── particles.py            # Ambient dust, roll sparks, ladder/snake/shield VFX
+│   ├── audio.py                # Procedural 16-bit PCM sound synthesizer
+│   └── screens.py              # HomeScreen, GameScreen, AnalyticsScreen (AI Lab)
+│
+├── data/                       # Cached training datasets and model weights
+│
+└── tests/
+    ├── __init__.py
+    ├── test_board.py           # Board, snakes, ladders, coordinates
+    ├── test_bfs.py             # BFS reachable paths and min rolls
+    ├── test_astar.py           # A* candidate scoring
+    ├── test_features.py        # 5 feature extraction bounds
+    ├── test_models.py          # Logistic Regression & K-Means
+    ├── test_game_rules.py      # Movement, bounce-back, shields, win detection
+    └── test_algorithm_compliance.py  # Strictly verifies the 4 required AI models
+```
+
+---
+
+## 6. Installation & Execution
+
+### Prerequisites
+* Python 3.11+
+* Standard C build tools (for Pygame if compiling from source)
+
+### Setup
 ```bash
-python -m venv venv
-# Windows:  venv\Scripts\activate        macOS / Linux:  source venv/bin/activate
+# 1. Create a virtual environment
+python3 -m venv venv
+
+# 2. Activate virtual environment
+# On macOS / Linux:
+source venv/bin/activate
+# On Windows:
+venv\Scripts\activate
+
+# 3. Install required packages
 pip install -r requirements.txt
 ```
-Run:
+
+### Run the Game
 ```bash
-python main.py
+python3 main.py
 ```
-The first launch trains the AI (a few seconds); later launches load the cache instantly.
 
-## Controls
-| key | action |
-|---|---|
-| `SPACE` / `ENTER` | roll dice |
-| `1` / `2` or click | choose die 1 / 2 (hover a die to preview its destination) |
-| `Y` / `N` | use / decline a shield |
-| `H` | K-Means risk heat-map on the board |
-| `P` | BFS route overlay |
-| `M` | sound on / off |
-| `F11` | fullscreen |
-| `ESC` | pause / back |
+*On the very first run, the system automatically simulates 10,000 games and trains the Logistic Regression and K-Means models in ~2 seconds, caching the results to `data/` for instant subsequent startups.*
 
-The window is resizable; the layout is scaled proportionally and letter-boxed for extreme aspect ratios.
-Sound effects are generated in code (no audio files) and the game runs silently if no audio device exists.
-Fonts and images fall back gracefully when unavailable.
+---
 
-## Testing
+## 7. Running the Test Suite
+
+Execute all automated unit and integration tests using `pytest`:
+
 ```bash
-pytest
+pytest tests/ -v
 ```
-Covers the board graph, movement/snakes/ladders/overshoot/win, BFS, A*, features, both ML models, the
-decision engine, shields, turn alternation, and a headless end-to-end UI smoke test (SDL dummy driver).
+
+All 7 test suites validate board construction, BFS paths, A* scores, 5-feature dimensions, model training, game rules, and strict algorithm compliance.

@@ -1,90 +1,165 @@
-"""Procedurally generated sound effects (no audio files required).
-
-If the mixer or NumPy synthesis is unavailable every call silently does nothing.
 """
-from __future__ import annotations
+Audio Manager module for AI-Powered Snake & Ladder.
+Procedurally synthesizes crisp 16-bit PCM sound effects in memory using Python's standard wave library.
+Zero external audio files required. Completely fault-tolerant and crash-proof.
+"""
 
+import io
+import wave
 import math
-
-import numpy as np
+import struct
+from typing import Dict, Optional
 import pygame
-
-SAMPLE_RATE = 22050
-
-
-def _tone(freq: float, dur: float, vol: float = 0.4, kind: str = "sine",
-          slide: float = 0.0, decay: float = 6.0) -> np.ndarray:
-    n = int(SAMPLE_RATE * dur)
-    t = np.linspace(0, dur, n, endpoint=False)
-    f = freq + slide * (t / dur)
-    phase = 2 * np.pi * np.cumsum(f) / SAMPLE_RATE
-    if kind == "square":
-        wave = np.sign(np.sin(phase)) * 0.6
-    elif kind == "saw":
-        wave = 2 * ((phase / (2 * np.pi)) % 1.0) - 1.0
-    else:
-        wave = np.sin(phase)
-    env = np.exp(-decay * t / dur) * np.minimum(1.0, t / 0.004)
-    return wave * env * vol
-
-
-def _seq(parts: list[tuple[float, np.ndarray]], total: float) -> np.ndarray:
-    out = np.zeros(int(SAMPLE_RATE * total))
-    for start, snd in parts:
-        i = int(start * SAMPLE_RATE)
-        j = min(out.size, i + snd.size)
-        if j > i:
-            out[i:j] += snd[: j - i]
-    return out
-
-
-def _synthesize() -> dict[str, np.ndarray]:
-    rng = np.random.default_rng(3)
-    sounds: dict[str, np.ndarray] = {}
-    sounds["click"] = _tone(1300, 0.05, 0.55, decay=5)
-    ticks = [(i * 0.055 + rng.random() * 0.02,
-              _tone(700 + rng.random() * 900, 0.03, 0.8, "square", decay=3)) for i in range(9)]
-    sounds["dice"] = _seq(ticks, 0.62)
-    sounds["move"] = _tone(520, 0.07, 0.5, decay=4)
-    sounds["ladder"] = _seq([(i * 0.09, _tone(f, 0.16, 0.3, decay=4))
-                             for i, f in enumerate((440, 554, 659, 880))], 0.55)
-    sounds["snake"] = _tone(520, 0.6, 0.3, "saw", slide=-380, decay=3)
-    shimmer = _tone(880, 0.5, 0.22, decay=3) + _tone(1320, 0.5, 0.16, decay=4)
-    sounds["shield"] = shimmer * (0.7 + 0.3 * np.sin(np.linspace(0, 40, shimmer.size)))
-    sounds["ai"] = _seq([(0, _tone(660, 0.09, 0.25)), (0.1, _tone(990, 0.12, 0.25))], 0.25)
-    sounds["victory"] = _seq([(i * 0.13, _tone(f, 0.35, 0.3, decay=3))
-                              for i, f in enumerate((523, 659, 784, 1046, 784, 1046, 1318))], 1.2)
-    return sounds
 
 
 class AudioManager:
-    """Loads generated sounds; ``play`` is always safe to call."""
+    """
+    Manages procedural sound effect synthesis and playback.
+    """
 
-    def __init__(self) -> None:
-        self.enabled = True
-        self.available = False
-        self._sounds: dict[str, pygame.mixer.Sound] = {}
+    SAMPLE_RATE = 22050
+
+    def __init__(self, enabled: bool = True):
+        self.enabled: bool = enabled
+        self.initialized: bool = False
+        self.sounds: Dict[str, pygame.mixer.Sound] = {}
+
+        self._init_mixer()
+        if self.initialized and self.enabled:
+            self._generate_all_sounds()
+
+    def _init_mixer(self) -> None:
+        """Initializes Pygame mixer safely."""
         try:
-            pygame.mixer.init(frequency=SAMPLE_RATE, size=-16, channels=2)
-            for name, wave in _synthesize().items():
-                data = np.clip(wave, -1.0, 1.0)
-                pcm = (np.column_stack([data, data]) * 32767).astype(np.int16)
-                self._sounds[name] = pygame.sndarray.make_sound(np.ascontiguousarray(pcm))
-            self.available = True
+            if not pygame.mixer.get_init():
+                pygame.mixer.init(frequency=self.SAMPLE_RATE, size=-16, channels=2, buffer=512)
+            self.initialized = True
         except Exception:
-            self.available = False
+            self.initialized = False
 
-    def play(self, name: str, volume: float = 0.6) -> None:
-        if not (self.enabled and self.available):
+    def _create_wav_sound(self, sample_generator) -> Optional[pygame.mixer.Sound]:
+        """Encodes procedural sample float generator [-1.0, 1.0] into a WAV Sound object."""
+        if not self.initialized:
+            return None
+
+        bio = io.BytesIO()
+        try:
+            with wave.open(bio, "wb") as wf:
+                wf.setnchannels(1)  # Mono
+                wf.setsampwidth(2)   # 16-bit
+                wf.setframerate(self.SAMPLE_RATE)
+                frames = bytearray()
+
+                for s in sample_generator:
+                    val = max(-1.0, min(1.0, s))
+                    ival = int(val * 32767)
+                    frames.extend(struct.pack("<h", ival))
+
+                wf.writeframes(frames)
+
+            bio.seek(0)
+            return pygame.mixer.Sound(bio)
+        except Exception:
+            return None
+
+    def _generate_all_sounds(self) -> None:
+        """Procedurally synthesizes all game sound effects."""
+        # 1. Button Click (800Hz snap)
+        def click_samples():
+            duration = 0.04
+            total_samples = int(duration * self.SAMPLE_RATE)
+            for i in range(total_samples):
+                t = i / self.SAMPLE_RATE
+                env = 1.0 - (i / total_samples)
+                yield math.sin(2 * math.pi * 880 * t) * env * 0.3
+
+        # 2. Dice Roll Tumble (fluttering clicks)
+        def dice_samples():
+            duration = 0.08
+            total_samples = int(duration * self.SAMPLE_RATE)
+            for i in range(total_samples):
+                t = i / self.SAMPLE_RATE
+                freq = 300 + 400 * math.sin(2 * math.pi * 35 * t)
+                env = math.exp(-i / (total_samples * 0.4))
+                yield math.sin(2 * math.pi * freq * t) * env * 0.35
+
+        # 3. Move Hop (440Hz bell)
+        def move_samples():
+            duration = 0.06
+            total_samples = int(duration * self.SAMPLE_RATE)
+            for i in range(total_samples):
+                t = i / self.SAMPLE_RATE
+                env = 1.0 - (i / total_samples)
+                yield math.sin(2 * math.pi * 520 * t) * env * 0.3
+
+        # 4. Ladder Climb (C5 - E5 - G5 ascending arpeggio)
+        def ladder_samples():
+            duration = 0.3
+            total_samples = int(duration * self.SAMPLE_RATE)
+            freqs = [523.25, 659.25, 783.99]
+            for i in range(total_samples):
+                idx = min(2, int((i / total_samples) * 3))
+                f = freqs[idx]
+                t = i / self.SAMPLE_RATE
+                env = 1.0 - (i / total_samples)
+                yield math.sin(2 * math.pi * f * t) * env * 0.4
+
+        # 5. Snake Slide (descending hiss-like swoop)
+        def snake_samples():
+            duration = 0.35
+            total_samples = int(duration * self.SAMPLE_RATE)
+            for i in range(total_samples):
+                frac = i / total_samples
+                f = 500.0 - 320.0 * frac
+                t = i / self.SAMPLE_RATE
+                env = math.sin(frac * math.pi)
+                yield math.sin(2 * math.pi * f * t) * env * 0.35
+
+        # 6. Shield Block (Metallic harmonic clang)
+        def shield_samples():
+            duration = 0.25
+            total_samples = int(duration * self.SAMPLE_RATE)
+            for i in range(total_samples):
+                t = i / self.SAMPLE_RATE
+                env = math.exp(-i / (total_samples * 0.25))
+                tone1 = math.sin(2 * math.pi * 600 * t)
+                tone2 = math.sin(2 * math.pi * 1240 * t) * 0.5
+                yield (tone1 + tone2) * env * 0.4
+
+        # 7. Victory Fanfare (Celebratory chord)
+        def victory_samples():
+            duration = 0.6
+            total_samples = int(duration * self.SAMPLE_RATE)
+            chord = [523.25, 659.25, 783.99, 1046.50]
+            for i in range(total_samples):
+                t = i / self.SAMPLE_RATE
+                env = 1.0 - (i / total_samples)
+                val = sum(math.sin(2 * math.pi * f * t) for f in chord) / len(chord)
+                yield val * env * 0.45
+
+        # Map sound objects
+        sound_gens = {
+            "click": click_samples,
+            "dice": dice_samples,
+            "move": move_samples,
+            "ladder": ladder_samples,
+            "snake": snake_samples,
+            "shield": shield_samples,
+            "victory": victory_samples,
+        }
+
+        for name, gen in sound_gens.items():
+            snd = self._create_wav_sound(gen())
+            if snd:
+                self.sounds[name] = snd
+
+    def play(self, name: str) -> None:
+        """Plays sound effect safely."""
+        if not self.enabled or not self.initialized:
             return
-        try:
-            snd = self._sounds.get(name)
-            if snd is not None:
-                snd.set_volume(volume)
+        snd = self.sounds.get(name)
+        if snd:
+            try:
                 snd.play()
-        except Exception:
-            pass
-
-    def toggle(self) -> bool:
-        self.enabled = not self.enabled
-        return self.enabled
+            except Exception:
+                pass

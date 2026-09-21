@@ -1,64 +1,68 @@
+"""
+Tests for Machine Learning models: Logistic Regression and K-Means (K=3).
+"""
+
+import pytest
 import numpy as np
-
-from ai.data_generator import build_feature_dataset, simulate_games
-from ai.decision_engine import DecisionEngine
 from ai.features import FeatureExtractor
-from game.board import Board
-from tests.helpers import get_board, get_small_bundle
+from ai.data_generator import DatasetSimulator
+from ai.logistic_model import LogisticWinModel
+from ai.kmeans_model import KMeansRiskModel
 
 
-def test_simulation_generates_labelled_rows():
-    board = get_board()
-    data = simulate_games(board, n_games=200, seed=1)
-    assert data.n_games == 200 and data.n_rows > 200
-    assert set(np.unique(data.won)) == {0, 1}
-    assert data.cells.min() >= 1 and data.cells.max() <= 100
-    X, y = build_feature_dataset(data, FeatureExtractor(board).matrix())
-    assert X.shape == (data.n_rows, 5) and y.shape == (data.n_rows,)
+def test_simulation_data_generation():
+    fe = FeatureExtractor()
+    sim = DatasetSimulator(feature_extractor=fe)
+
+    # Fast small simulation for test verification
+    X, y = sim.generate_dataset(num_games=100, force_regenerate=True)
+    assert X.ndim == 2
+    assert X.shape[1] == 5
+    assert y.ndim == 1
+    assert set(np.unique(y)).issubset({0, 1})
 
 
-def test_simulation_is_reproducible():
-    a = simulate_games(get_board(), n_games=100, seed=3)
-    b = simulate_games(get_board(), n_games=100, seed=3)
-    assert np.array_equal(a.cells, b.cells) and np.array_equal(a.won, b.won)
+def test_logistic_regression_training_and_inference():
+    fe = FeatureExtractor()
+    sim = DatasetSimulator(feature_extractor=fe)
+    X, y = sim.generate_dataset(num_games=200, force_regenerate=True)
+
+    model = LogisticWinModel(fe)
+    metrics = model.train(X, y)
+
+    assert model.is_trained
+    assert 0.0 <= model.accuracy <= 1.0
+    assert model.confusion_matrix.shape == (2, 2)
+    assert len(model.feature_coefficients) == 5
+
+    # Check inference across all cells
+    for c in (1, 25, 50, 75, 100):
+        prob = model.predict_win_probability(c)
+        assert 0.0 <= prob <= 1.0, f"Win prob {prob} for cell {c} out of range"
+
+    # Higher position generally yields higher win probability
+    p_early = model.predict_win_probability(10)
+    p_late = model.predict_win_probability(90)
+    assert p_late >= p_early
 
 
-def test_logistic_regression_trains_and_predicts_probabilities():
-    bundle = get_small_bundle()
-    m = bundle.model.metrics
-    assert m is not None and 0.0 <= m.accuracy <= 1.0
-    assert sum(sum(row) for row in m.confusion) == m.n_test
-    proba = bundle.model.predict_proba(bundle.features.matrix())
-    assert proba.shape == (100,)
-    assert ((proba >= 0.0) & (proba <= 1.0)).all()
-    # progress should raise the estimated chance of winning
-    assert proba[98] > proba[0]
+def test_kmeans_clustering():
+    fe = FeatureExtractor()
+    kmeans = KMeansRiskModel(fe)
+    kmeans.fit_board()
 
+    assert kmeans.is_trained
+    assert len(kmeans.cell_zones) == 100
 
-def test_kmeans_creates_three_clusters_with_measured_zones():
-    bundle = get_small_bundle()
-    clusterer = bundle.clusterer
-    assert len(set(clusterer.labels.tolist())) == 3
-    assert sorted(p.zone for p in clusterer.profiles) == ["ADVANTAGE", "DANGER", "SAFE"]
-    hazards = {p.zone: p.hazard for p in clusterer.profiles}
-    assert hazards["DANGER"] > hazards["SAFE"] > hazards["ADVANTAGE"]
-    assert sum(p.size for p in clusterer.profiles) == 100
+    # Ensure exactly 3 semantic zones are assigned
+    assigned_zones = set(kmeans.cell_zones.values())
+    assert assigned_zones == {"Danger", "Safe", "Advantage"}
 
-
-def test_decision_engine_picks_higher_weighted_score():
-    engine = DecisionEngine(get_small_bundle())
-    result = engine.decide(42, (3, 5), 2)
-    a, b = result.candidates
-    best = max((a, b), key=lambda c: c.final_score)
-    assert result.chosen == best.die_index
-    for c in (a, b):
-        expected = 0.6 * c.astar_score + 0.4 * c.win_probability
-        assert abs(c.final_score - expected) < 1e-9
-
-
-def test_decision_handles_overshoot_and_winning_moves():
-    engine = DecisionEngine(get_small_bundle())
-    forced = engine.decide(97, (6, 3), 2)         # 6 overshoots, 3 wins
-    assert forced.chosen == 1 and forced.candidates[1].wins_game
-    none = engine.decide(99, (5, 6), 2)
-    assert none.chosen is None
+    # Heatmap structure verification
+    heatmap = kmeans.get_heatmap()
+    assert len(heatmap) == 100
+    for c in range(1, 101):
+        assert c in heatmap
+        assert "zone" in heatmap[c]
+        assert "color" in heatmap[c]
+        assert "features" in heatmap[c]

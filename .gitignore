@@ -2,8 +2,6 @@ __pycache__/
 *.pyc
 venv/
 .pytest_cache/
-data/models.pkl
-data/training_data.npz
 .idea/
 .DS_Store
 *.swp
