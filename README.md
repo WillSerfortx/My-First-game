@@ -1,8 +1,13 @@
 # AI-Powered Snake & Ladder
 
-**Strategic Gameplay with Intelligent Decision-Making** - a desktop game written 100 % in Python
-(Pygame + NumPy + scikit-learn). A human plays against an AI opponent whose every decision is
-computed from four AI / search / machine-learning techniques: **BFS, A\*, Logistic Regression and K-Means**.
+[![Play Online](https://img.shields.io/badge/Play%20Online-GitHub%20Pages-blue?style=for-the-badge&logo=github)](https://willserfortx.github.io/ai_snake_ladder/)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
+
+> 🎮 **Play Instantly in Your Browser:** **[https://willserfortx.github.io/ai_snake_ladder/](https://willserfortx.github.io/ai_snake_ladder/)**  
+> *No downloads or Python installations required. Full desktop and mobile support with real-time AI decision visualization.*
+
+**Strategic Gameplay with Intelligent Decision-Making** - a game powered by four AI / search / machine-learning techniques: **BFS, A\*, Logistic Regression, and K-Means**. Playable as a desktop application (Pygame) or directly online in any modern web browser via GitHub Pages.
 
 ## 🎬 Gameplay Demo
 
