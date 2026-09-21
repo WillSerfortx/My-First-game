@@ -1,253 +1,164 @@
-"""
-Game Engine module for AI-Powered Snake & Ladder.
-Coordinates turns, players, dice, state transitions, shields, and event history.
-"""
+"""Turn-based game engine (pure logic, no rendering).
 
-from enum import Enum, auto
-from typing import List, Dict, Any, Optional
+Typical human/AI turn::
+
+    roll = engine.roll_dice()
+    plan = engine.select_die(index)            # logs the selection
+    ...                                        # UI walks the token along plan.walk_path
+    outcome = engine.execute_move(plan, use_shield)
+    if not outcome.won:
+        engine.end_turn()
+"""
+from __future__ import annotations
+
+import random
 import time
+from dataclasses import dataclass, field
+from enum import Enum
 
-from .board import Board
-from .player import Player
-from .dice import DualDice
-from .rules import GameRules
-
-
-class TurnPhase(Enum):
-    IDLE = auto()
-    ROLLING_DICE = auto()
-    WAITING_HUMAN_SELECTION = auto()
-    AI_THINKING = auto()
-    WAITING_HUMAN_SHIELD = auto()
-    MOVING_PLAYER = auto()
-    ROUND_END = auto()
-    GAME_OVER = auto()
+from .board import Board, SpecialKind
+from .constants import GOAL_CELL
+from .dice import DiceRoll, roll_two_dice
+from .player import Player, PlayerId
+from .rules import MovePlan, final_cell, plan_move
 
 
+class EventKind(Enum):
+    SYSTEM = "system"
+    ROLL = "roll"
+    SELECT = "select"
+    MOVE = "move"
+    LADDER = "ladder"
+    SNAKE = "snake"
+    SHIELD = "shield"
+    AI = "ai"
+    WIN = "win"
+
+
+@dataclass(frozen=True)
+class GameEvent:
+    timestamp: float
+    kind: EventKind
+    text: str
+
+
+@dataclass(frozen=True)
+class MoveOutcome:
+    """Result of executing a move."""
+    player: PlayerId
+    plan: MovePlan
+    final_cell: int
+    special_applied: SpecialKind
+    shield_used: bool
+    won: bool
+
+
+@dataclass
 class GameEngine:
-    """
-    State machine and coordinator for the Snake & Ladder game.
-    """
+    board: Board
+    rng: random.Random = field(default_factory=random.Random)
 
-    def __init__(self, board: Optional[Board] = None):
-        self.board: Board = board if board is not None else Board()
+    def __post_init__(self) -> None:
+        self.reset()
 
-        # Players: Human (Cyan theme), AI (Magenta/Purple theme)
-        self.human = Player(
-            name="Human Player",
-            is_ai=False,
-            primary_color=(6, 182, 212),     # Neon Cyan
-            secondary_color=(14, 116, 144),  # Darker Cyan
-            initial_shields=2,
-        )
-        self.ai = Player(
-            name="AI Agent",
-            is_ai=True,
-            primary_color=(168, 85, 247),    # Cyber Purple
-            secondary_color=(126, 34, 206),  # Darker Purple
-            initial_shields=2,
-        )
-        self.players: List[Player] = [self.human, self.ai]
-        self.current_player_idx: int = 0  # 0: Human, 1: AI
-
-        self.dice: DualDice = DualDice(roll_duration=0.25)
-        self.phase: TurnPhase = TurnPhase.IDLE
-
+    # ------------------------------------------------------------------ state
+    def reset(self) -> None:
+        self.players: dict[PlayerId, Player] = {
+            PlayerId.HUMAN: Player(PlayerId.HUMAN),
+            PlayerId.AI: Player(PlayerId.AI),
+        }
+        self.current: PlayerId = PlayerId.HUMAN
         self.turn_number: int = 1
-        self.winner: Optional[Player] = None
-
-        # Pending move resolution data during animation / shield interaction
-        self.pending_move: Optional[Dict[str, Any]] = None
-        self.pending_roll: Optional[int] = None
-        self.ai_decision_data: Optional[Dict[str, Any]] = None
-
-        # Event log
-        self.event_log: List[Dict[str, Any]] = []
-        self.add_log("System", "Game initialized. Ready for Round 1!", category="system")
+        self.dice: DiceRoll | None = None
+        self.winner: PlayerId | None = None
+        self.events: list[GameEvent] = []
+        # (round, human position, ai position) -- used by the progress chart
+        self.history: list[tuple[int, int, int]] = [(0, 1, 1)]
+        self.log(EventKind.SYSTEM, "Board initialised: 100 cells, 10 snakes, 9 ladders")
 
     @property
-    def current_player(self) -> Player:
-        return self.players[self.current_player_idx]
+    def active(self) -> Player:
+        return self.players[self.current]
 
     @property
-    def waiting_player(self) -> Player:
-        return self.players[1 - self.current_player_idx]
+    def opponent(self) -> Player:
+        return self.players[self.current.other]
 
-    def add_log(self, source: str, message: str, category: str = "info") -> None:
-        """Adds a timestamped event entry to the log."""
-        timestamp = time.strftime("%H:%M:%S")
-        self.event_log.append({
-            "time": timestamp,
-            "turn": self.turn_number,
-            "source": source,
-            "message": message,
-            "category": category,
-        })
-        # Keep log within 150 items
-        if len(self.event_log) > 150:
-            self.event_log.pop(0)
+    @property
+    def game_over(self) -> bool:
+        return self.winner is not None
 
-    def start_new_game(self) -> None:
-        """Resets the entire game state."""
-        self.human.reset()
-        self.ai.reset()
-        self.dice.reset()
-        self.current_player_idx = 0
-        self.turn_number = 1
-        self.winner = None
-        self.phase = TurnPhase.IDLE
-        self.pending_move = None
-        self.pending_roll = None
-        self.ai_decision_data = None
-        self.event_log.clear()
-        self.add_log("System", "New game started. Human's turn to roll.", category="system")
+    def log(self, kind: EventKind, text: str) -> None:
+        self.events.append(GameEvent(time.time(), kind, text))
 
-    def trigger_roll(self) -> None:
-        """Starts the dice roll for the current player."""
-        if self.phase != TurnPhase.IDLE:
-            return
+    # ------------------------------------------------------------------ turns
+    def roll_dice(self) -> DiceRoll:
+        """Roll two dice for the active player."""
+        self.dice = roll_two_dice(self.rng)
+        a, b = self.dice.values
+        self.log(EventKind.ROLL, f"{self.active.name} rolled {a} and {b}")
+        return self.dice
 
-        values = self.dice.roll()
-        self.phase = TurnPhase.ROLLING_DICE
-        player_type = "AI" if self.current_player.is_ai else "Human"
-        self.add_log(player_type, f"Rolled [{values[0]}] and [{values[1]}].", category="dice")
+    def plan_for(self, die_index: int, player: Player | None = None) -> MovePlan | None:
+        """Plan (without side effects) the move for one of the two dice."""
+        if self.dice is None:
+            raise RuntimeError("Dice have not been rolled")
+        player = player or self.active
+        return plan_move(self.board, player.position, die_index,
+                         self.dice[die_index], player.shields)
 
-    def update_dice_roll(self, dt: float) -> bool:
-        """Updates the rolling dice physics."""
-        finished = self.dice.update(dt)
-        if finished and self.phase == TurnPhase.ROLLING_DICE:
-            if self.current_player.is_ai:
-                self.phase = TurnPhase.AI_THINKING
-            else:
-                self.phase = TurnPhase.WAITING_HUMAN_SELECTION
-            return True
-        return False
+    def valid_die_indices(self) -> list[int]:
+        return [i for i in (0, 1) if self.plan_for(i) is not None]
 
-    def human_select_dice(self, dice_index: int) -> Optional[Dict[str, Any]]:
-        """Handles human player clicking dice 0 or 1."""
-        if self.phase != TurnPhase.WAITING_HUMAN_SELECTION:
-            return None
+    def select_die(self, die_index: int) -> MovePlan:
+        """Commit to a die: logs the selection and returns the move plan."""
+        plan = self.plan_for(die_index)
+        if plan is None:
+            raise ValueError("Selected die overshoots the goal")
+        self.log(EventKind.SELECT, f"{self.active.name} selected {plan.die_value}")
+        return plan
 
-        chosen_val = self.dice.select(dice_index)
-        self.pending_roll = chosen_val
-        self.add_log("Human", f"Selected dice [{chosen_val}].", category="choice")
+    def skip_turn(self) -> None:
+        """Used when neither die is playable (both overshoot cell 100)."""
+        self.active.turns += 1
+        self.log(EventKind.SYSTEM,
+                 f"{self.active.name} cannot move (both dice overshoot cell {GOAL_CELL})")
 
-        # Preliminary move calculation to check if landing on snake
-        move_info = GameRules.resolve_move(
-            self.human.position,
-            chosen_val,
-            self.board,
-            use_shield=False,
-        )
+    def execute_move(self, plan: MovePlan, use_shield: bool = False) -> MoveOutcome:
+        """Apply a planned move to the game state."""
+        player = self.active
+        dest, special = final_cell(plan, use_shield)
+        shield_used = plan.special is SpecialKind.SNAKE and dest == plan.landing and use_shield \
+            and plan.shield_available
+        player.turns += 1
+        self.log(EventKind.MOVE, f"{player.name} moved to cell {plan.landing}")
 
-        if move_info["hit_snake"] and self.human.has_shields():
-            # Prompt human to use shield
-            self.pending_move = move_info
-            self.phase = TurnPhase.WAITING_HUMAN_SHIELD
-            self.add_log("Human", f"Snake threat detected at cell {move_info['landing_cell']}!", category="warning")
-            return move_info
-        else:
-            # Execute move directly
-            self._execute_move(move_info)
-            return move_info
+        if shield_used:
+            player.shields -= 1
+            player.shields_used += 1
+            player.snakes_hit += 1     # the snake was encountered, just blocked
+            self.log(EventKind.SHIELD,
+                     f"{player.name} used a shield - snake blocked at cell {plan.landing} "
+                     f"({player.shields} left)")
+        elif special is SpecialKind.SNAKE:
+            player.snakes_hit += 1
+            self.log(EventKind.SNAKE, f"Snake bite! {player.name} slides down to cell {dest}")
+        elif special is SpecialKind.LADDER:
+            player.ladders_hit += 1
+            self.log(EventKind.LADDER, f"Ladder activated -> cell {dest}")
 
-    def human_resolve_shield(self, use_shield: bool) -> None:
-        """Resolves human decision to activate shield or take the snake slide."""
-        if self.phase != TurnPhase.WAITING_HUMAN_SHIELD or self.pending_roll is None:
-            return
+        player.position = dest
+        won = dest == GOAL_CELL
+        if won:
+            self.winner = player.pid
+            self.log(EventKind.WIN, f"{player.name} reached cell {GOAL_CELL} and wins!")
+        return MoveOutcome(player.pid, plan, dest, special, shield_used, won)
 
-        if use_shield and self.human.use_shield():
-            self.add_log(
-                "Human",
-                f"Activated Shield! Blocked snake at cell {self.pending_move['landing_cell']}.",
-                category="shield",
-            )
-            move_info = GameRules.resolve_move(
-                self.human.position,
-                self.pending_roll,
-                self.board,
-                use_shield=True,
-            )
-        else:
-            self.add_log("Human", "Chose not to use shield. Slid down snake.", category="snake")
-            move_info = self.pending_move
-
-        self._execute_move(move_info)
-
-    def execute_ai_turn(self, chosen_dice_index: int, use_shield: bool, decision_meta: Dict[str, Any]) -> None:
-        """Executes the AI's chosen move after the AI decision engine finishes."""
-        if self.phase != TurnPhase.AI_THINKING:
-            return
-
-        chosen_val = self.dice.select(chosen_dice_index)
-        self.pending_roll = chosen_val
-        self.ai_decision_data = decision_meta
-
-        self.add_log("AI", f"Engine chose dice [{chosen_val}].", category="ai")
-
-        if use_shield:
-            self.ai.use_shield()
-            self.add_log("AI", "Strategically deployed Shield to block snake.", category="shield")
-
-        move_info = GameRules.resolve_move(
-            self.ai.position,
-            chosen_val,
-            self.board,
-            use_shield=use_shield,
-        )
-        self._execute_move(move_info)
-
-    def _execute_move(self, move_info: Dict[str, Any]) -> None:
-        """Starts player token movement animation toward destination."""
-        player = self.current_player
-        player.queue_movement_path(move_info["path"])
-        self.pending_move = move_info
-        self.phase = TurnPhase.MOVING_PLAYER
-
-    def update_movement(self, dt: float) -> bool:
-        """Updates moving player token visual animation."""
-        if self.phase != TurnPhase.MOVING_PLAYER:
-            return False
-
-        done = self.current_player.update_animation(dt)
-        if done:
-            self._finalize_turn()
-            return True
-        return False
-
-    def _finalize_turn(self) -> None:
-        """Updates statistics, checks win conditions, and advances turn."""
-        player = self.current_player
-        move_info = self.pending_move or {}
-
-        hit_snake = move_info.get("hit_snake", False)
-        hit_ladder = move_info.get("hit_ladder", False)
-        shield_used = move_info.get("shield_used", False)
-        landing = move_info.get("landing_cell", player.position)
-        final_pos = move_info.get("final_cell", player.position)
-
-        player.record_turn(final_pos, hit_snake and not shield_used, hit_ladder, shield_used)
-
-        p_name = "AI" if player.is_ai else "Human"
-        if hit_ladder:
-            self.add_log(p_name, f"Climbed ladder from {landing} to {final_pos} (+{move_info.get('ladder_gain', 0)})!", category="ladder")
-        elif hit_snake and not shield_used:
-            self.add_log(p_name, f"Bitten by snake at {landing}! Slid down to {final_pos} (-{move_info.get('snake_loss', 0)}).", category="snake")
-        else:
-            self.add_log(p_name, f"Arrived at cell {final_pos}.", category="move")
-
-        # Win condition check
-        if GameRules.is_game_over(player.position):
-            self.winner = player
-            self.phase = TurnPhase.GAME_OVER
-            self.add_log("System", f"Game Over! {player.name} reaches cell 100 and WINS!", category="victory")
-            return
-
-        # Advance turn
-        self.current_player_idx = 1 - self.current_player_idx
-        if self.current_player_idx == 0:
+    def end_turn(self) -> None:
+        """Hand the turn to the other player (a round ends after the AI moves)."""
+        if self.current is PlayerId.AI:
+            h, a = self.players[PlayerId.HUMAN].position, self.players[PlayerId.AI].position
+            self.history.append((self.turn_number, h, a))
             self.turn_number += 1
-
-        self.phase = TurnPhase.IDLE
-        self.pending_move = None
-        self.pending_roll = None
+        self.current = self.current.other
+        self.dice = None

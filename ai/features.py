@@ -1,85 +1,56 @@
-"""
-Feature extraction module for AI-Powered Snake & Ladder.
-Computes the 5 mandatory ML features for any cell on the 100-cell board:
-1. dist_to_snake: Distance to nearest relevant snake head ahead
-2. dist_to_ladder: Distance to nearest relevant ladder base ahead
-3. snakes_within_6: Count of snake heads within roll range (next 6 cells)
-4. ladders_within_6: Count of ladder bases within roll range (next 6 cells)
-5. position_pct: Current position as board percentage (cell / 100.0)
-"""
+"""Per-cell feature engineering (five features per cell)."""
+from __future__ import annotations
 
-from typing import List, Dict, Optional, Union
 import numpy as np
+
 from game.board import Board
+from game.constants import DIST_CAP, NEAR_WINDOW, NUM_CELLS
+
+FEATURE_NAMES: tuple[str, ...] = (
+    "dist_to_snake",
+    "dist_to_ladder",
+    "snakes_within_6",
+    "ladders_within_6",
+    "position_pct",
+)
+
+FEATURE_DESCRIPTIONS: dict[str, str] = {
+    "dist_to_snake": f"Cells to the nearest snake head ahead (capped at {DIST_CAP})",
+    "dist_to_ladder": f"Cells to the nearest ladder bottom ahead (capped at {DIST_CAP})",
+    "snakes_within_6": "Snake heads within one die roll (6 cells) ahead",
+    "ladders_within_6": "Ladder bottoms within one die roll (6 cells) ahead",
+    "position_pct": "Board progress in percent (cell / 100 * 100)",
+}
 
 
 class FeatureExtractor:
-    """
-    Extracts the 5 strategic features for any board cell or batch of cells.
-    """
+    """Computes and caches the 5-feature vector for every cell."""
 
-    FEATURE_NAMES: List[str] = [
-        "dist_to_snake",
-        "dist_to_ladder",
-        "snakes_within_6",
-        "ladders_within_6",
-        "position_pct",
-    ]
+    def __init__(self, board: Board) -> None:
+        self.board = board
+        self._matrix = np.vstack([self._compute(c) for c in range(1, NUM_CELLS + 1)])
 
-    def __init__(self, board: Optional[Board] = None):
-        self.board: Board = board if board is not None else Board()
-        self.snake_heads: List[int] = sorted(self.board.snakes.keys())
-        self.ladder_bases: List[int] = sorted(self.board.ladders.keys())
-
-        # Precompute features for all 100 cells for lightning-fast lookup
-        self._cell_features: np.ndarray = np.zeros((self.board.TOTAL_CELLS + 1, 5), dtype=np.float64)
-        self._precompute_all()
-
-    def _precompute_all(self) -> None:
-        """Precomputes feature vectors for cells 1 through 100."""
-        for c in range(1, self.board.TOTAL_CELLS + 1):
-            self._cell_features[c] = self._extract_raw(c)
-
-    def _extract_raw(self, cell: int) -> np.ndarray:
-        """Computes the 5 features for a single cell."""
-        # 1. Distance to nearest snake head ahead
-        snakes_ahead = [h - cell for h in self.snake_heads if h > cell]
-        dist_to_snake = min(snakes_ahead) if snakes_ahead else 100.0
-
-        # 2. Distance to nearest ladder bottom ahead
-        ladders_ahead = [b - cell for b in self.ladder_bases if b > cell]
-        dist_to_ladder = min(ladders_ahead) if ladders_ahead else 100.0
-
-        # 3. Snakes within next 6 cells (immediate threat window)
-        snakes_w6 = sum(1 for h in self.snake_heads if cell < h <= min(100, cell + 6))
-
-        # 4. Ladders within next 6 cells (immediate opportunity window)
-        ladders_w6 = sum(1 for b in self.ladder_bases if cell < b <= min(100, cell + 6))
-
-        # 5. Position progress percentage
-        pos_pct = cell / float(self.board.TOTAL_CELLS)
-
+    def _compute(self, cell: int) -> np.ndarray:
+        b = self.board
+        snakes = b.snake_heads_ahead(cell)
+        ladders = b.ladder_bottoms_ahead(cell)
+        dist_snake = min(snakes[0] - cell, DIST_CAP) if snakes else DIST_CAP
+        dist_ladder = min(ladders[0] - cell, DIST_CAP) if ladders else DIST_CAP
         return np.array([
-            float(dist_to_snake),
-            float(dist_to_ladder),
-            float(snakes_w6),
-            float(ladders_w6),
-            float(pos_pct),
+            dist_snake,
+            dist_ladder,
+            len(b.snake_heads_ahead(cell, NEAR_WINDOW)),
+            len(b.ladder_bottoms_ahead(cell, NEAR_WINDOW)),
+            cell / NUM_CELLS * 100.0,
         ], dtype=np.float64)
 
-    def extract_cell(self, cell: int) -> np.ndarray:
-        """Returns the 5-element feature vector for a given cell (1..100)."""
-        clamped = max(1, min(self.board.TOTAL_CELLS, int(cell)))
-        return self._cell_features[clamped].copy()
+    def features_for(self, cell: int) -> np.ndarray:
+        """Feature vector (shape ``(5,)``) of a cell."""
+        return self._matrix[cell - 1].copy()
 
-    def extract_dict(self, cell: int) -> Dict[str, float]:
-        """Returns the features as a human-readable dictionary."""
-        feats = self.extract_cell(cell)
-        return {
-            self.FEATURE_NAMES[i]: float(feats[i])
-            for i in range(len(self.FEATURE_NAMES))
-        }
+    def matrix(self) -> np.ndarray:
+        """Feature matrix for cells 1..100 (shape ``(100, 5)``, row = cell - 1)."""
+        return self._matrix.copy()
 
-    def extract_all_cells(self) -> np.ndarray:
-        """Returns a (100, 5) numpy matrix for cells 1 to 100."""
-        return self._cell_features[1:].copy()
+    def snakes_within_6(self, cell: int) -> int:
+        return int(self._matrix[cell - 1, 2])

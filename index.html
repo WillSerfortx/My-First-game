@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI-Powered Snake & Ladder — Strategic Decision-Making</title>
+  <meta name="description" content="AI-Powered Snake & Ladder with BFS, A*, Logistic Regression, and K-Means. Play directly in your browser.">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Ambient Particle Field (Matches AmbientField in ui/particles.py) -->
+  <canvas id="ambient-canvas"></canvas>
+
+  <div id="app-viewport">
+    <!-- ====================================================================
+         SCREEN 1: HOME SCREEN (Matches HomeScreen in ui/screens.py)
+         ==================================================================== -->
+    <section class="screen active" id="screen-home">
+      <div class="home-content">
+        <!-- Floating Animated Pawns -->
+        <div class="pawn-decor pawn-human">P</div>
+        <div class="pawn-decor pawn-ai">AI</div>
+
+        <div class="home-subtitle-spaced">A I - P O W E R E D</div>
+        <h1 class="home-title">SNAKE & LADDER</h1>
+        <div class="home-strapline">Strategic Gameplay</div>
+        <div class="home-strapline-sub">with Intelligent Decision-Making</div>
+
+        <!-- Menu Action Buttons -->
+        <div class="home-btn-group">
+          <button class="btn-game-home btn-primary-home" id="btn-home-start">
+            <span>🎲</span> START GAME
+          </button>
+          <button class="btn-game-home btn-secondary-home" id="btn-home-lab">
+            <span>🔬</span> AI LAB
+          </button>
+          <button class="btn-game-home btn-secondary-home" id="btn-home-how">
+            <span>📖</span> HOW IT WORKS
+          </button>
+        </div>
+
+        <!-- 4 AI Techniques Chips (Matches chips in ui/screens.py) -->
+        <div class="tech-chips">
+          <span class="tech-chip chip-bfs">BFS</span>
+          <span class="tech-chip chip-astar">A*</span>
+          <span class="tech-chip chip-lr">LOGISTIC REGRESSION</span>
+          <span class="tech-chip chip-km">K-MEANS</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         SCREEN 2: GAME SCREEN (Matches GameScreen in ui/game_screen.py)
+         ==================================================================== -->
+    <section class="screen" id="screen-game">
+      <!-- Header Bar -->
+      <header class="game-header-bar">
+        <div class="header-left">
+          <button class="btn-header" id="btn-game-menu">
+            &larr; MENU
+          </button>
+          <div class="game-title-center">AI-POWERED SNAKE & LADDER</div>
+        </div>
+        <div class="header-right">
+          <button class="btn-header" id="btn-game-sound">
+            SOUND ON [M]
+          </button>
+          <button class="btn-header" id="btn-game-fs">
+            FULLSCREEN [F11]
+          </button>
+        </div>
+      </header>
+
+      <!-- Main Layout: Board on Left, Dashboard on Right -->
+      <div class="game-main-grid">
+        <!-- Left: Board Panel -->
+        <div class="board-panel-wrap">
+          <div class="canvas-board-box">
+            <canvas id="board-canvas" width="630" height="630"></canvas>
+          </div>
+
+          <div class="board-bottom-bar">
+            <div class="board-btn-group">
+              <button class="btn-board-toggle" id="btn-board-heat">
+                <span>🔥</span> HEATMAP [H]
+              </button>
+              <button class="btn-board-toggle" id="btn-board-route">
+                <span>⚡</span> BFS ROUTE [P]
+              </button>
+            </div>
+            <div class="board-legend-text">
+              <span>🐍 10 Snakes</span>
+              <span>🪜 9 Ladders</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Dashboard Columns -->
+        <div class="right-dashboard-col">
+          <!-- 1. MATCH STATUS PANEL -->
+          <div class="panel-box">
+            <div class="panel-header-title">
+              <span>MATCH STATUS</span>
+              <span style="font-size: 0.72rem; color: var(--text-dim);">GOAL: CELL 100</span>
+            </div>
+            <div class="players-status-row">
+              <!-- Player Card -->
+              <div class="player-status-card turn-active" id="status-card-human">
+                <div class="pcard-head">
+                  <div class="pcard-name">
+                    <span class="turn-dot" style="background: var(--cyan); box-shadow: 0 0 8px var(--cyan);"></span>
+                    <span>Player (You)</span>
+                  </div>
+                  <span class="turn-badge-live" style="background: rgba(72, 222, 255, 0.2); color: var(--cyan);">YOUR TURN</span>
+                </div>
+                <div class="pcard-pos-row">
+                  <span class="pcard-pos-num" id="pos-text-human">Cell 1</span>
+                  <span class="pcard-winprob" id="winprob-text-human">Win: 35%</span>
+                </div>
+                <div class="mini-bar-bg">
+                  <div class="mini-bar-fill" id="bar-fill-human" style="width: 35%; background: var(--cyan);"></div>
+                </div>
+                <div class="pcard-shields-row">
+                  <span>Shields:</span>
+                  <div class="shield-pill">
+                    <span class="shield-unit" id="shield-h-1">🛡️</span>
+                    <span class="shield-unit" id="shield-h-2">🛡️</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- AI Card -->
+              <div class="player-status-card ai-card" id="status-card-ai">
+                <div class="pcard-head">
+                  <div class="pcard-name">
+                    <span class="turn-dot" style="background: var(--magenta); box-shadow: 0 0 8px var(--magenta);"></span>
+                    <span>AI Agent</span>
+                  </div>
+                  <span class="turn-badge-live" style="background: rgba(218, 96, 255, 0.2); color: var(--magenta); display: none;" id="badge-ai-turn">THINKING</span>
+                </div>
+                <div class="pcard-pos-row">
+                  <span class="pcard-pos-num" id="pos-text-ai">Cell 1</span>
+                  <span class="pcard-winprob" id="winprob-text-ai">Win: 35%</span>
+                </div>
+                <div class="mini-bar-bg">
+                  <div class="mini-bar-fill" id="bar-fill-ai" style="width: 35%; background: var(--magenta);"></div>
+                </div>
+                <div class="pcard-shields-row">
+                  <span>Shields:</span>
+                  <div class="shield-pill">
+                    <span class="shield-unit" id="shield-a-1">🛡️</span>
+                    <span class="shield-unit" id="shield-a-2">🛡️</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. DUAL DICE & ACTIONS -->
+          <div class="panel-box dice-action-panel">
+            <div class="panel-header-title">
+              <span>DUAL DICE & MOVES</span>
+              <span id="turn-phase-indicator" style="font-size: 0.72rem; color: var(--gold);">ROLL DICE [SPACE]</span>
+            </div>
+            <div class="dice-row">
+              <div class="die-widget" id="die-widget-0" data-val="1">
+                <div class="die-pip"></div><div class="die-pip"></div><div class="die-pip"></div>
+                <div class="die-pip"></div><div class="die-pip"></div><div class="die-pip"></div>
+                <div class="die-pip"></div><div class="die-pip"></div><div class="die-pip"></div>
+              </div>
+              <div class="die-widget" id="die-widget-1" data-val="6">
+                <div class="die-pip"></div><div class="die-pip"></div><div class="die-pip"></div>
+                <div class="die-pip"></div><div class="die-pip"></div><div class="die-pip"></div>
+                <div class="die-pip"></div><div class="die-pip"></div><div class="die-pip"></div>
+              </div>
+            </div>
+
+            <button class="btn-roll-main" id="btn-roll-dice">
+              ROLL DUAL DICE [SPACE]
+            </button>
+
+            <!-- Candidate Choice Cards -->
+            <div class="cand-choice-grid" id="cand-choice-grid" style="display: none;">
+              <!-- Option A -->
+              <div class="cand-choice-card" id="card-choice-0">
+                <div class="cand-head-row">
+                  <span class="cand-opt-tag">DICE OPTION A [1]</span>
+                  <span class="cand-die-val" id="choice-val-0">1</span>
+                </div>
+                <div class="cand-dest-text" id="choice-dest-0">Destination: Cell 2</div>
+                <div class="cand-note-text" id="choice-note-0">Plain move</div>
+              </div>
+
+              <!-- Option B -->
+              <div class="cand-choice-card" id="card-choice-1">
+                <div class="cand-head-row">
+                  <span class="cand-opt-tag">DICE OPTION B [2]</span>
+                  <span class="cand-die-val" id="choice-val-1">6</span>
+                </div>
+                <div class="cand-dest-text" id="choice-dest-1">Destination: Cell 7</div>
+                <div class="cand-note-text" id="choice-note-1">Plain move</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. AI TRANSPARENCY PANEL (Matches ui/game_screen.py) -->
+          <div class="panel-box ai-panel-box">
+            <div class="panel-header-title">
+              <span>AI TRANSPARENCY PANEL</span>
+              <span id="ai-status-badge" style="font-size: 0.72rem; color: var(--text-dim);">WAITING</span>
+            </div>
+
+            <div class="ai-candidates-list">
+              <!-- Candidate A -->
+              <div class="ai-cand-row" id="ai-row-0">
+                <div class="ai-cand-title-row">
+                  <span id="ai-title-0">DICE OPTION A: -</span>
+                  <span id="ai-dest-0" style="color: var(--text-dim);">-</span>
+                </div>
+                <div class="score-bar-item">
+                  <div class="score-bar-label">
+                    <span>A* Safe Route Score</span>
+                    <span id="ai-astar-text-0">0.00</span>
+                  </div>
+                  <div class="score-track">
+                    <div class="score-fill fill-astar-bar" id="ai-astar-bar-0" style="width: 0%;"></div>
+                  </div>
+                </div>
+                <div class="score-bar-item">
+                  <div class="score-bar-label">
+                    <span>LR Win Probability</span>
+                    <span id="ai-win-text-0">0%</span>
+                  </div>
+                  <div class="score-track">
+                    <div class="score-fill fill-win-bar" id="ai-win-bar-0" style="width: 0%;"></div>
+                  </div>
+                </div>
+                <div class="score-bar-item">
+                  <div class="score-bar-label">
+                    <span>Final Weighted Score (60/40)</span>
+                    <strong id="ai-final-text-0">0.00</strong>
+                  </div>
+                  <div class="score-track">
+                    <div class="score-fill fill-final-bar" id="ai-final-bar-0" style="width: 0%;"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Candidate B -->
+              <div class="ai-cand-row" id="ai-row-1">
+                <div class="ai-cand-title-row">
+                  <span id="ai-title-1">DICE OPTION B: -</span>
+                  <span id="ai-dest-1" style="color: var(--text-dim);">-</span>
+                </div>
+                <div class="score-bar-item">
+                  <div class="score-bar-label">
+                    <span>A* Safe Route Score</span>
+                    <span id="ai-astar-text-1">0.00</span>
+                  </div>
+                  <div class="score-track">
+                    <div class="score-fill fill-astar-bar" id="ai-astar-bar-1" style="width: 0%;"></div>
+                  </div>
+                </div>
+                <div class="score-bar-item">
+                  <div class="score-bar-label">
+                    <span>LR Win Probability</span>
+                    <span id="ai-win-text-1">0%</span>
+                  </div>
+                  <div class="score-track">
+                    <div class="score-fill fill-win-bar" id="ai-win-bar-1" style="width: 0%;"></div>
+                  </div>
+                </div>
+                <div class="score-bar-item">
+                  <div class="score-bar-label">
+                    <span>Final Weighted Score (60/40)</span>
+                    <strong id="ai-final-text-1">0.00</strong>
+                  </div>
+                  <div class="score-track">
+                    <div class="score-fill fill-final-bar" id="ai-final-bar-1" style="width: 0%;"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- AI Verdict Card -->
+            <div class="ai-verdict-banner" id="ai-verdict-banner">
+              Waiting for the AI's turn...
+            </div>
+          </div>
+
+          <!-- 4. EVENT LOG -->
+          <div class="panel-box">
+            <div class="panel-header-title">
+              <span>EVENT LOG</span>
+              <button id="btn-clear-log" style="background:none; border:none; color:var(--text-dim); font-size:0.7rem; cursor:pointer;">CLEAR</button>
+            </div>
+            <div class="event-log-panel" id="event-log-feed">
+              <div class="log-item">
+                <span class="log-badge" style="background: rgba(218, 96, 255, 0.2); color: var(--magenta);">SYSTEM</span>
+                <span>Match started! Roll dual dice to make your opening move.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         SCREEN 3: AI LAB SCREEN (Matches AILabScreen in ui/screens.py)
+         ==================================================================== -->
+    <section class="screen" id="screen-lab">
+      <div class="lab-header-banner">
+        <div>
+          <h2 style="font-family: var(--font-display); font-size: 1.6rem; color: #fff;">AI LAB — ALGORITHM ANALYSIS</h2>
+          <p style="font-size: 0.85rem; color: var(--text-dim);">Live statistics, search graphs and machine learning evaluation.</p>
+        </div>
+        <button class="btn-header" id="btn-lab-back">&larr; BACK TO MENU</button>
+      </div>
+
+      <div class="tab-nav-bar">
+        <button class="tab-nav-btn active" data-tab="lab-bfs">1. BFS Shortest Path</button>
+        <button class="tab-nav-btn" data-tab="lab-astar">2. A* Risk Search</button>
+        <button class="tab-nav-btn" data-tab="lab-lr">3. Logistic Regression</button>
+        <button class="tab-nav-btn" data-tab="lab-km">4. K-Means Risk Clustering</button>
+      </div>
+
+      <!-- BFS Tab -->
+      <div class="tab-content-area active" id="tab-lab-bfs">
+        <div class="stat-quad-grid">
+          <div class="stat-unit-card">
+            <span style="font-size:0.75rem; color:var(--text-dim);">MIN ROLLS (START CELL 1)</span>
+            <span class="stat-unit-val">7 Rolls</span>
+            <span style="font-size:0.72rem; color:var(--text-faint);">Best-case ladder sequence</span>
+          </div>
+          <div class="stat-unit-card">
+            <span style="font-size:0.75rem; color:var(--text-dim);">BOARD GRAPH EDGES</span>
+            <span class="stat-unit-val">585 Edges</span>
+            <span style="font-size:0.72rem; color:var(--text-faint);">Exact overshoot rules included</span>
+          </div>
+          <div class="stat-unit-card">
+            <span style="font-size:0.75rem; color:var(--text-dim);">HEURISTIC PROPERTY</span>
+            <span class="stat-unit-val" style="color:var(--green);">Admissible</span>
+            <span style="font-size:0.72rem; color:var(--text-faint);">h(n) &le; true distance to goal</span>
+          </div>
+          <div class="stat-unit-card">
+            <span style="font-size:0.75rem; color:var(--text-dim);">MAX GRAPH DIAMETER</span>
+            <span class="stat-unit-val">7 Steps</span>
+            <span style="font-size:0.72rem; color:var(--text-faint);">Shortest path table for all 100 cells</span>
+          </div>
+        </div>
+
+        <div class="panel-box" style="margin-top: 8px;">
+          <strong style="font-size: 0.9rem; color: var(--cyan);">Interactive BFS Path Inspector</strong>
+          <p style="font-size: 0.8rem; color: var(--text-dim);">Move the slider to see the shortest path from any cell to cell 100:</p>
+          <div style="display:flex; align-items:center; gap:14px; margin-top:8px;">
+            <input type="range" id="bfs-cell-slider" min="1" max="99" value="1" style="flex:1;">
+            <strong id="bfs-slider-display" style="color:var(--gold); font-size:1.1rem; width:80px;">Cell 1</strong>
+          </div>
+          <div id="bfs-route-display" style="margin-top:10px; padding:10px; background:rgba(0,0,0,0.3); border-radius:4px; font-size:0.8rem;">
+            Loading BFS path...
+          </div>
+        </div>
+      </div>
+
+      <!-- A* Tab -->
+      <div class="tab-content-area" id="tab-lab-astar">
+        <div class="stat-quad-grid">
+          <div class="stat-unit-card">
+            <span style="font-size:0.75rem; color:var(--text-dim);">COST PER STEP</span>
+            <span class="stat-unit-val" style="font-size:1.2rem;">1 + Snakes / 6</span>
+            <span style="font-size:0.72rem; color:var(--text-faint);">1 roll + probability next roll hits a snake</span>
+          </div>
+          <div class="stat-unit-card">
+            <span style="font-size:0.75rem; color:var(--text-dim);">SEARCH SPACE</span>
+            <span class="stat-unit-val">Snake-Free</span>
+            <span style="font-size:0.72rem; color:var(--text-faint);">Routes may not land on snake heads</span>
+          </div>
+          <div class="stat-unit-card">
+            <span style="font-size:0.75rem; color:var(--text-dim);">NORMALISATION</span>
+            <span class="stat-unit-val">0.0 &rarr; 1.0</span>
+            <span style="font-size:0.72rem; color:var(--text-faint);">1.0 at goal, lower for high snake risk</span>
+          </div>
+          <div class="stat-unit-card">
+            <span style="font-size:0.75rem; color:var(--text-dim);">DECISION WEIGHT</span>
+            <span class="stat-unit-val" style="color:var(--cyan);">60 %</span>
+            <span style="font-size:0.72rem; color:var(--text-faint);">Blended with 40% win probability</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Logistic Regression Tab -->
+      <div class="tab-content-area" id="tab-lab-lr">
+        <div class="stat-quad-grid">
+          <div class="stat-unit-card">
+            <span style="font-size:0.75rem; color:var(--text-dim);">MODEL ACCURACY</span>
+            <span class="stat-unit-val" style="color:var(--green);" id="lr-stat-acc">57.6 %</span>
+            <span style="font-size:0.72rem; color:var(--text-faint);">Majority baseline: 50.3%</span>
+          </div>
+          <div class="stat-unit-card">
+            <span style="font-size:0.75rem; color:var(--text-dim);">ROC AUC SCORE</span>
+            <span class="stat-unit-val" id="lr-stat-auc">0.604</span>
+            <span style="font-size:0.72rem; color:var(--text-faint);">Evaluated on unseen hold-out games</span>
+          </div>
+          <div class="stat-unit-card">
+            <span style="font-size:0.75rem; color:var(--text-dim);">TRAINING DATASET</span>
+            <span class="stat-unit-val">443,090</span>
+            <span style="font-size:0.72rem; color:var(--text-faint);">Simulated game-state rows</span>
+          </div>
+          <div class="stat-unit-card">
+            <span style="font-size:0.75rem; color:var(--text-dim);">PRECISION / RECALL / F1</span>
+            <span class="stat-unit-val" style="font-size:1.15rem;">0.581 / 0.563 / 0.572</span>
+            <span style="font-size:0.72rem; color:var(--text-faint);">StandardScaler + LogisticRegression</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- K-Means Tab -->
+      <div class="tab-content-area" id="tab-lab-km">
+        <div class="stat-quad-grid">
+          <div class="stat-unit-card">
+            <span style="font-size:0.75rem; color:var(--text-dim);">K CLUSTERS</span>
+            <span class="stat-unit-val">K = 3</span>
+            <span style="font-size:0.72rem; color:var(--text-faint);">Ranked by measured hazard</span>
+          </div>
+          <div class="stat-unit-card">
+            <span style="font-size:0.75rem; color:var(--text-dim);">FEATURE VECTORS</span>
+            <span class="stat-unit-val">5 Features</span>
+            <span style="font-size:0.72rem; color:var(--text-faint);">Snakes, ladders & board progress</span>
+          </div>
+          <div class="stat-unit-card">
+            <span style="font-size:0.75rem; color:var(--text-dim);">HEATMAP OVERLAY</span>
+            <span class="stat-unit-val" style="color:var(--gold);">Press H</span>
+            <span style="font-size:0.72rem; color:var(--text-faint);">Visualizes zones directly on board</span>
+          </div>
+          <div class="stat-unit-card">
+            <span style="font-size:0.75rem; color:var(--text-dim);">HAZARD FORMULA</span>
+            <span class="stat-unit-val" style="font-size:1.1rem;">(Snakes - Ladders) + &Delta;Inv</span>
+            <span style="font-size:0.72rem; color:var(--text-faint);">DANGER, SAFE, ADVANTAGE</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         SCREEN 4: HOW IT WORKS SCREEN (Matches HowItWorksScreen in ui/screens.py)
+         ==================================================================== -->
+    <section class="screen" id="screen-how">
+      <div class="lab-header-banner">
+        <div>
+          <h2 style="font-family: var(--font-display); font-size: 1.6rem; color: #fff;">HOW IT WORKS — RULES & ARCHITECTURE</h2>
+          <p style="font-size: 0.85rem; color: var(--text-dim);">Understanding the strategic game design and AI pipeline.</p>
+        </div>
+        <button class="btn-header" id="btn-how-back">&larr; BACK TO MENU</button>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 14px;">
+        <div class="panel-box">
+          <h3 style="color: var(--cyan); font-size: 1.1rem; margin-bottom: 6px;">1. The Dual-Dice Decision Problem</h3>
+          <p style="font-size: 0.85rem; color: var(--text-dim); line-height: 1.5;">
+            In traditional Snake & Ladder, the dice roll dictates every move. Here, every turn rolls <strong>two dice</strong> and the active player must select one value. Overshooting cell 100 is strictly illegal (if both dice overshoot, your turn is skipped).
+          </p>
+        </div>
+
+        <div class="panel-box">
+          <h3 style="color: var(--gold); font-size: 1.1rem; margin-bottom: 6px;">2. Shield Deflection Strategy</h3>
+          <p style="font-size: 0.85rem; color: var(--text-dim); line-height: 1.5;">
+            Each player holds <strong>2 shields</strong>. When you land on a snake head, you may spend a shield to deflect the snake and stay on that cell. The AI only uses a shield if the calculated position loss exceeds a dynamic reserve threshold, which halves in the endgame (cells &ge; 75).
+          </p>
+        </div>
+
+        <div class="panel-box">
+          <h3 style="color: var(--magenta); font-size: 1.1rem; margin-bottom: 6px;">3. The AI Decision Engine Formula</h3>
+          <div style="padding: 10px; background: rgba(0,0,0,0.4); border-radius: 4px; font-family: monospace; font-size: 0.95rem; color: var(--gold); margin: 6px 0;">
+            Final_Score = 0.60 &times; A*_Score + 0.40 &times; Logistic_Win_Probability
+          </div>
+          <p style="font-size: 0.85rem; color: var(--text-dim); line-height: 1.5;">
+            A* evaluates the safest path along the board graph, while Logistic Regression predicts long-term game win probabilities trained on 10,000 simulated games.
+          </p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Shield Decision Modal (Matches ui/game_screen.py ShieldModal) -->
+  <div class="modal-overlay" id="modal-shield">
+    <div class="modal-card-box">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span style="font-size: 2rem;">🛡️</span>
+        <div>
+          <h3 style="font-family: var(--font-display); font-size: 1.25rem;">Use Shield?</h3>
+          <div style="font-size: 0.8rem; color: var(--gold);" id="modal-shield-loss">Snake at cell 47 (drop to 26)</div>
+        </div>
+      </div>
+      <p style="font-size: 0.85rem; color: var(--text-dim); line-height: 1.5;">
+        You landed on a snake head! Spending a shield will block the snake and keep your piece safely on this cell.
+      </p>
+      <div style="padding: 10px; background: rgba(0,0,0,0.3); border-left: 3px solid var(--cyan); border-radius: 4px; font-size: 0.8rem;" id="modal-shield-advisor">
+        AI Advisor: Calculating recommendation...
+      </div>
+      <div class="modal-btn-row">
+        <button class="btn-game-home btn-secondary-home" id="btn-shield-decline" style="padding: 10px;">Decline [N]</button>
+        <button class="btn-game-home btn-primary-home" id="btn-shield-accept" style="padding: 10px;">Use Shield [Y]</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Victory Celebration Modal (Matches ui/game_screen.py _draw_victory) -->
+  <div class="modal-overlay" id="modal-victory">
+    <div class="modal-card-box" style="text-align: center; align-items: center;">
+      <div style="font-size: 3rem;">🏆</div>
+      <h2 style="font-family: var(--font-display); font-size: 1.8rem; color: var(--gold);" id="victory-title">VICTORY</h2>
+      <div style="font-family: var(--font-display); font-size: 1.2rem; font-weight: 800;" id="victory-winner">HUMAN WINS</div>
+      <p style="font-size: 0.85rem; color: var(--text-dim); margin-top: 4px;" id="victory-tagline">Your strategy conquered the board!</p>
+      <div style="margin: 12px 0; font-size: 0.8rem; color: var(--text); line-height: 1.6;" id="victory-stats">
+        Turns: - | Final Position: 100
+      </div>
+      <div class="modal-btn-row" style="width: 100%;">
+        <button class="btn-game-home btn-secondary-home" id="btn-victory-menu" style="padding: 10px;">MAIN MENU</button>
+        <button class="btn-game-home btn-primary-home" id="btn-victory-again" style="padding: 10px;">PLAY AGAIN</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cell Hover Tooltip -->
+  <div id="game-tooltip"></div>
+
+  <!-- Scripts -->
+  <script src="game_data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

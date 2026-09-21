@@ -1,136 +1,133 @@
-"""
-Board module for AI-Powered Snake & Ladder.
-Defines the 10x10 grid, 10 snakes, 9 ladders, directed graph representation,
-and coordinate conversion for rendering.
-"""
+"""Board model: a 10x10 Snake & Ladder board represented as a directed graph."""
+from __future__ import annotations
 
-from typing import Dict, List, Tuple, Optional
+import hashlib
+import json
+from dataclasses import dataclass
+from enum import Enum
+
+from .constants import (
+    BOARD_SIZE, DICE_SIDES, GOAL_CELL, LADDERS, NUM_CELLS, SNAKES, START_CELL,
+)
+
+
+class SpecialKind(Enum):
+    """What a landing cell does."""
+    NONE = "none"
+    SNAKE = "snake"
+    LADDER = "ladder"
+
+
+@dataclass(frozen=True)
+class Edge:
+    """One graph edge: rolling ``die`` from a cell.
+
+    ``landing`` is the cell reached by walking; ``destination`` is where the
+    player ends up after the snake/ladder (if any) is applied.
+    """
+    die: int
+    landing: int
+    destination: int
+    kind: SpecialKind
 
 
 class Board:
+    """Directed graph over cells 1..100.
+
+    ``graph[cell]`` is the adjacency list of destination cells reachable with
+    one die roll (1..6). Rolls that would overshoot cell 100 produce no edge
+    (exact finish is required). Snake/ladder redirections are already applied
+    to the destinations, so BFS/A*/simulation all share the same structure.
     """
-    Represents the 100-cell Snake & Ladder board as a directed graph.
-    """
 
-    TOTAL_CELLS = 100
-    GRID_SIZE = 10
-
-    # 10 Snakes (head -> tail)
-    DEFAULT_SNAKES: Dict[int, int] = {
-        98: 78,
-        95: 56,
-        92: 73,
-        87: 24,
-        64: 60,
-        62: 19,
-        54: 34,
-        48: 26,
-        44: 16,
-        17: 7,
-    }
-
-    # 9 Ladders (bottom -> top)
-    DEFAULT_LADDERS: Dict[int, int] = {
-        4: 14,
-        9: 31,
-        20: 38,
-        28: 84,
-        40: 59,
-        51: 67,
-        63: 81,
-        71: 91,
-        80: 99,
-    }
-
-    def __init__(
-        self,
-        snakes: Optional[Dict[int, int]] = None,
-        ladders: Optional[Dict[int, int]] = None,
-    ):
-        self.snakes: Dict[int, int] = dict(snakes if snakes is not None else self.DEFAULT_SNAKES)
-        self.ladders: Dict[int, int] = dict(ladders if ladders is not None else self.DEFAULT_LADDERS)
-        self.graph: Dict[int, Dict[int, int]] = {}
+    def __init__(self, snakes: dict[int, int] | None = None,
+                 ladders: dict[int, int] | None = None) -> None:
+        self.snakes: dict[int, int] = dict(SNAKES if snakes is None else snakes)
+        self.ladders: dict[int, int] = dict(LADDERS if ladders is None else ladders)
+        self._validate()
+        self.jumps: dict[int, int] = {**self.snakes, **self.ladders}
+        self.edges: dict[int, list[Edge]] = {}
+        self.graph: dict[int, list[int]] = {}
+        # move_table[cell][die] = (landing, destination, is_snake) or None -- fast path for simulation
+        self.move_table: list[list[tuple[int, int, bool] | None]] = []
         self._build_graph()
+        self._snake_heads_sorted = sorted(self.snakes)
+        self._ladder_bottoms_sorted = sorted(self.ladders)
+
+    # ------------------------------------------------------------------ setup
+    def _validate(self) -> None:
+        for head, tail in self.snakes.items():
+            if not (START_CELL < tail < head < GOAL_CELL):
+                raise ValueError(f"Invalid snake {head}->{tail}")
+        for bottom, top in self.ladders.items():
+            if not (START_CELL < bottom < top <= GOAL_CELL):
+                raise ValueError(f"Invalid ladder {bottom}->{top}")
+        overlap = set(self.snakes) & set(self.ladders)
+        if overlap:
+            raise ValueError(f"Cells used by both a snake and a ladder: {sorted(overlap)}")
+        starts = set(self.snakes) | set(self.ladders)
+        ends = set(self.snakes.values()) | set(self.ladders.values())
+        chained = starts & ends
+        if chained:
+            raise ValueError(f"Chained jumps are not allowed: {sorted(chained)}")
 
     def _build_graph(self) -> None:
-        """
-        Builds the directed graph adjacency structure.
-        For each cell 1..100, maps each possible dice roll 1..6
-        to the resulting cell after bounce-back, snakes, and ladders.
-        """
-        self.graph = {}
-        for cell in range(1, self.TOTAL_CELLS + 1):
-            self.graph[cell] = {}
-            for roll in range(1, 7):
-                dest = self.calculate_destination(cell, roll, ignore_snakes=False)
-                self.graph[cell][roll] = dest
+        self.move_table = [[None] * (DICE_SIDES + 1) for _ in range(NUM_CELLS + 1)]
+        for cell in range(START_CELL, NUM_CELLS + 1):
+            edges: list[Edge] = []
+            for die in range(1, DICE_SIDES + 1):
+                landing = cell + die
+                if landing > GOAL_CELL:
+                    continue
+                kind = self.kind_at(landing)
+                dest = self.jumps.get(landing, landing)
+                edges.append(Edge(die, landing, dest, kind))
+                self.move_table[cell][die] = (landing, dest, kind is SpecialKind.SNAKE)
+            self.edges[cell] = edges
+            self.graph[cell] = [e.destination for e in edges]
 
-    def calculate_destination(
-        self, current_cell: int, roll: int, ignore_snakes: bool = False
-    ) -> int:
-        """
-        Calculates the landing cell after a roll, accounting for overshoot bounce,
-        ladders, and snakes (unless shielded).
-        """
-        if current_cell == self.TOTAL_CELLS:
-            return self.TOTAL_CELLS
+    # ---------------------------------------------------------------- queries
+    def kind_at(self, cell: int) -> SpecialKind:
+        if cell in self.snakes:
+            return SpecialKind.SNAKE
+        if cell in self.ladders:
+            return SpecialKind.LADDER
+        return SpecialKind.NONE
 
-        target = current_cell + roll
+    def edge(self, cell: int, die: int) -> Edge | None:
+        """Edge for rolling ``die`` from ``cell`` (None when it overshoots)."""
+        for e in self.edges.get(cell, ()):
+            if e.die == die:
+                return e
+        return None
 
-        # Overshoot rule: bounce back from 100
-        if target > self.TOTAL_CELLS:
-            excess = target - self.TOTAL_CELLS
-            target = self.TOTAL_CELLS - excess
+    def snake_heads_ahead(self, cell: int, window: int | None = None) -> list[int]:
+        """Snake heads strictly ahead of ``cell`` (optionally within ``window``)."""
+        return [h for h in self._snake_heads_sorted
+                if h > cell and (window is None or h - cell <= window)]
 
-        # Ladder takes precedence if landed on ladder bottom
-        if target in self.ladders:
-            return self.ladders[target]
+    def ladder_bottoms_ahead(self, cell: int, window: int | None = None) -> list[int]:
+        return [b for b in self._ladder_bottoms_sorted
+                if b > cell and (window is None or b - cell <= window)]
 
-        # Snake moves to tail unless shielded
-        if target in self.snakes and not ignore_snakes:
-            return self.snakes[target]
+    def signature(self) -> str:
+        """Stable hash of the board layout (used to invalidate caches)."""
+        payload = json.dumps([sorted(self.snakes.items()), sorted(self.ladders.items())])
+        return hashlib.sha1(payload.encode()).hexdigest()[:12]
 
-        return target
+    # --------------------------------------------------------------- geometry
+    @staticmethod
+    def cell_to_grid(cell: int) -> tuple[int, int]:
+        """(row_from_bottom, column) with boustrophedon numbering."""
+        if not START_CELL <= cell <= NUM_CELLS:
+            raise ValueError(f"cell out of range: {cell}")
+        idx = cell - 1
+        row, col = divmod(idx, BOARD_SIZE)
+        if row % 2 == 1:
+            col = BOARD_SIZE - 1 - col
+        return row, col
 
-    def get_cell_coordinates(self, cell: int) -> Tuple[int, int]:
-        """
-        Converts a 1-based cell number into (col, row) where:
-        col: 0..9 (left to right)
-        row: 0..9 (0 is top row, 9 is bottom row for screen rendering)
-        Alternating row direction (serpentine):
-          Cell 1 at bottom-left (0, 9)
-          Cell 10 at bottom-right (9, 9)
-          Cell 11 at (9, 8)
-          Cell 20 at (0, 8)
-          Cell 100 at (0, 0)
-        """
-        cell_clamped = max(1, min(self.TOTAL_CELLS, cell))
-        idx = cell_clamped - 1
-        board_row = idx // self.GRID_SIZE  # 0 at bottom, 9 at top
-        col_in_row = idx % self.GRID_SIZE
-
-        if board_row % 2 == 0:
-            col = col_in_row
-        else:
-            col = (self.GRID_SIZE - 1) - col_in_row
-
-        row = (self.GRID_SIZE - 1) - board_row
-        return col, row
-
-    def is_snake_head(self, cell: int) -> bool:
-        return cell in self.snakes
-
-    def is_snake_tail(self, cell: int) -> bool:
-        return cell in self.snakes.values()
-
-    def is_ladder_bottom(self, cell: int) -> bool:
-        return cell in self.ladders
-
-    def is_ladder_top(self, cell: int) -> bool:
-        return cell in self.ladders.values()
-
-    def get_snake_tail(self, cell: int) -> Optional[int]:
-        return self.snakes.get(cell)
-
-    def get_ladder_top(self, cell: int) -> Optional[int]:
-        return self.ladders.get(cell)
+    @staticmethod
+    def grid_to_cell(row: int, col: int) -> int:
+        actual_col = col if row % 2 == 0 else BOARD_SIZE - 1 - col
+        return row * BOARD_SIZE + actual_col + 1

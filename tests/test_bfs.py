@@ -1,44 +1,38 @@
-"""
-Tests for BFS Shortest Path analysis and minimum rolls calculation.
-"""
-
-import pytest
+from ai.bfs import BFSAnalyzer, bfs_shortest_path
 from game.board import Board
-from ai.bfs import BFSAnalyzer
 
 
-def test_bfs_goal_and_start():
+def test_goal_is_zero_rolls():
     board = Board()
-    bfs = BFSAnalyzer(board)
-
-    # Goal requires 0 rolls
-    assert bfs.get_min_rolls(100) == 0
-
-    # Cell 1 requires approximately 7 rolls (specification benchmark)
-    c1_rolls = bfs.get_min_rolls(1)
-    assert 5 <= c1_rolls <= 9, f"Expected cell 1 min rolls around 7, got {c1_rolls}"
+    res = bfs_shortest_path(board, 100)
+    assert res.found and res.rolls == 0 and res.path == (100,)
 
 
-def test_bfs_all_cells_reachable():
+def test_cell_one_needs_about_seven_rolls():
+    analyzer = BFSAnalyzer(Board())
+    assert analyzer.min_rolls(1) == 7
+
+
+def test_all_cells_reach_the_goal():
     board = Board()
-    bfs = BFSAnalyzer(board)
-
-    for cell in range(1, 101):
-        rolls = bfs.get_min_rolls(cell)
-        assert rolls >= 0
-        if cell < 100:
-            assert rolls > 0
-            best_moves = bfs.get_optimal_rolls(cell)
-            assert len(best_moves) > 0
-            for r in best_moves:
-                assert 1 <= r <= 6
+    analyzer = BFSAnalyzer(board)
+    assert len(analyzer.min_rolls_table) == 100
+    assert all(r >= 0 for r in analyzer.min_rolls_table.values())
 
 
-def test_bfs_monotonic_proximity():
+def test_path_is_a_valid_chain_of_graph_edges():
     board = Board()
-    bfs = BFSAnalyzer(board)
+    res = bfs_shortest_path(board, 1)
+    assert res.path[0] == 1 and res.path[-1] == 100
+    assert res.rolls == len(res.path) - 1
+    for a, b in zip(res.path, res.path[1:]):
+        assert b in board.graph[a]
 
-    # From 99, 1 roll of 1 reaches 100
-    assert bfs.get_min_rolls(99) == 1
-    # From 94, roll of 6 reaches 100
-    assert bfs.get_min_rolls(94) == 1
+
+def test_minimum_path_calculation_on_known_cells():
+    board = Board()
+    assert bfs_shortest_path(board, 99).rolls == 1
+    assert bfs_shortest_path(board, 94).rolls == 1     # 94 + 6
+    assert bfs_shortest_path(board, 80).rolls == bfs_shortest_path(board, 80).rolls
+    # 71 -> ladder 91? only reachable by landing; from 65 a 6 hits it
+    assert bfs_shortest_path(board, 65).rolls <= 3

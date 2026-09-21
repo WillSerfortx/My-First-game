@@ -1,75 +1,127 @@
-"""
-Tests for Game Rules, movement mechanics, overshoot bounce, shields, and win detection.
-"""
+import random
 
 import pytest
-from game.board import Board
-from game.rules import GameRules
-from game.game_engine import GameEngine, TurnPhase
+
+from game.board import Board, SpecialKind
+from game.game_engine import GameEngine
+from game.player import PlayerId
+from game.rules import is_valid_move, plan_move
 
 
-def test_normal_forward_movement():
-    board = Board()
-    # From 1 with roll of 2 -> landing 3
-    res = GameRules.resolve_move(1, 2, board, use_shield=False)
-    assert res["final_cell"] == 3
-    assert not res["hit_snake"]
-    assert not res["hit_ladder"]
-    assert not res["bounced"]
+def engine(seed=0) -> GameEngine:
+    return GameEngine(Board(), random.Random(seed))
 
 
-def test_ladder_ascension():
-    board = Board()
-    # Ladder bottom at 4 -> climbs to 14
-    res = GameRules.resolve_move(1, 3, board, use_shield=False)
-    assert res["landing_cell"] == 4
-    assert res["final_cell"] == 14
-    assert res["hit_ladder"]
-    assert res["ladder_gain"] == 10
+def force_dice(eng: GameEngine, a: int, b: int) -> None:
+    from game.dice import DiceRoll
+    eng.dice = DiceRoll((a, b))
 
 
-def test_snake_slide_and_shield_protection():
-    board = Board()
-    # Snake at 17 -> slides to 7
-    # Case 1: Without shield
-    res_no_shield = GameRules.resolve_move(14, 3, board, use_shield=False)
-    assert res_no_shield["landing_cell"] == 17
-    assert res_no_shield["final_cell"] == 7
-    assert res_no_shield["hit_snake"]
-    assert not res_no_shield["shield_used"]
-
-    # Case 2: With shield
-    res_shielded = GameRules.resolve_move(14, 3, board, use_shield=True)
-    assert res_shielded["landing_cell"] == 17
-    assert res_shielded["final_cell"] == 17  # Retained position!
-    assert res_shielded["hit_snake"]
-    assert res_shielded["shield_used"]
+def test_normal_movement():
+    plan = plan_move(Board(), 10, 0, 3, 2)
+    assert plan.landing == 13 and plan.destination == 13 and plan.special is SpecialKind.NONE
+    assert plan.walk_path == (11, 12, 13)
 
 
-def test_overshoot_bounce_back():
-    board = Board()
-    # From 97, roll of 5 -> 97 + 5 = 102 -> bounce back 100 - (102 - 100) = 98
-    # Snake at 98 slides to 78
-    res = GameRules.resolve_move(97, 5, board, use_shield=False)
-    assert res["landing_cell"] == 98
-    assert res["bounced"]
-    assert res["final_cell"] == 78  # Snake at 98 activates!
+def test_snake_movement_and_ladder_movement():
+    eng = engine()
+    eng.active.position = 13
+    force_dice(eng, 3, 1)
+    outcome = eng.execute_move(eng.select_die(0), use_shield=False)      # 13 + 3 = 16 (snake)
+    assert outcome.final_cell == 6 and eng.players[PlayerId.HUMAN].snakes_hit == 1
+
+    eng2 = engine()
+    eng2.active.position = 6
+    force_dice(eng2, 3, 6)
+    outcome = eng2.execute_move(eng2.select_die(0), use_shield=False)    # 6 + 3 = 9 (ladder -> 31)
+    assert outcome.final_cell == 31 and eng2.players[PlayerId.HUMAN].ladders_hit == 1
 
 
-def test_exact_win_condition():
-    board = Board()
-    res = GameRules.resolve_move(95, 5, board, use_shield=False)
-    assert res["final_cell"] == 100
-    assert GameRules.is_game_over(res["final_cell"])
+def test_overshoot_handling():
+    assert not is_valid_move(98, 3) and is_valid_move(98, 2)
+    assert plan_move(Board(), 98, 0, 3, 2) is None
+    eng = engine()
+    eng.active.position = 98
+    force_dice(eng, 3, 5)
+    assert eng.valid_die_indices() == []
+    with pytest.raises(ValueError):
+        eng.select_die(0)
 
 
-def test_turn_alternation_and_shield_decrement():
-    engine = GameEngine()
-    assert engine.current_player_idx == 0
-    assert engine.human.shields == 2
-    assert engine.ai.shields == 2
+def test_reaching_100_wins_including_via_ladder():
+    eng = engine()
+    eng.active.position = 96
+    force_dice(eng, 4, 1)
+    outcome = eng.execute_move(eng.select_die(0))
+    assert outcome.won and eng.winner is PlayerId.HUMAN and eng.game_over
 
-    # Human uses a shield
-    assert engine.human.use_shield()
-    assert engine.human.shields == 1
-    assert engine.human.shields_used == 1
+    eng2 = engine()
+    eng2.active.position = 77
+    force_dice(eng2, 3, 1)                 # 77 + 3 = 80 -> ladder to 100
+    outcome = eng2.execute_move(eng2.select_die(0))
+    assert outcome.won and outcome.final_cell == 100
+
+
+def test_players_start_with_two_shields_and_shield_decrements():
+    eng = engine()
+    assert all(p.shields == 2 for p in eng.players.values())
+    eng.active.position = 13
+    force_dice(eng, 3, 1)
+    plan = eng.select_die(0)
+    assert plan.needs_shield_decision
+    outcome = eng.execute_move(plan, use_shield=True)
+    assert outcome.shield_used and outcome.final_cell == 16       # stays on the snake head
+    assert eng.players[PlayerId.HUMAN].shields == 1
+    assert eng.players[PlayerId.HUMAN].shields_used == 1
+
+
+def test_shield_is_not_consumed_without_a_snake():
+    eng = engine()
+    force_dice(eng, 3, 4)
+    outcome = eng.execute_move(eng.select_die(0), use_shield=True)
+    assert not outcome.shield_used and eng.active.shields == 2
+
+
+def test_no_shield_left_means_snake_applies():
+    eng = engine()
+    eng.active.position = 13
+    eng.active.shields = 0
+    force_dice(eng, 3, 1)
+    plan = eng.select_die(0)
+    assert not plan.needs_shield_decision
+    assert eng.execute_move(plan, use_shield=True).final_cell == 6
+
+
+def test_player_turns_alternate_and_rounds_count():
+    eng = engine()
+    assert eng.current is PlayerId.HUMAN and eng.turn_number == 1
+    eng.end_turn()
+    assert eng.current is PlayerId.AI and eng.turn_number == 1
+    eng.end_turn()
+    assert eng.current is PlayerId.HUMAN and eng.turn_number == 2
+    assert len(eng.history) == 2
+
+
+def test_dice_generation_in_range():
+    eng = engine(5)
+    for _ in range(200):
+        roll = eng.roll_dice()
+        assert all(1 <= v <= 6 for v in roll.values)
+
+
+def test_full_random_game_terminates():
+    eng = engine(11)
+    rng = random.Random(2)
+    for _ in range(5000):
+        eng.roll_dice()
+        valid = eng.valid_die_indices()
+        if not valid:
+            eng.skip_turn()
+        else:
+            plan = eng.select_die(rng.choice(valid))
+            eng.execute_move(plan, use_shield=plan.needs_shield_decision and rng.random() < 0.5)
+        if eng.game_over:
+            break
+        eng.end_turn()
+    assert eng.game_over and eng.winner is not None
+    assert eng.players[eng.winner].position == 100
