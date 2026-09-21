@@ -1,6 +1,6 @@
 # AI-Powered Snake & Ladder
 
-> 🎮 **[PLAY LIVE ONLINE DIRECTLY IN BROWSER](https://willserfortx.github.io/ai_snake_ladder/)** (No download or installation required!)
+> 🎮 **[PLAY LIVE ONLINE DIRECTLY IN BROWSER](https://willserfortx.github.io/My-First-game/)** (No download or installation required!)
 >
 > 📹 **[Watch Gameplay Demo Video](assets/demo.mov)**
 
