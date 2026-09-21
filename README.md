@@ -10,7 +10,7 @@ computed from four AI / search / machine-learning techniques: **BFS, A\*, Logist
   <video src="assets/demo.mov" width="100%" controls="controls"></video>
 </p>
 
-> 📹 **Watch Video:** If inline playback is not supported by your browser, you can [view or download the video directly](assets/demo.mov).
+> 📹 **Watch Video:** If inline playback is not supported by your browser, you can [view or download the video directly](assets/demo.mov) or [download the video from Releases](https://github.com/WillSerfortx/ai_snake_ladder/releases/download/v1.0.0/Screen_Recording.mov).
 
 ## Description
 
